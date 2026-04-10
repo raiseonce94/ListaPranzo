@@ -2,17 +2,29 @@ name: Docker Image CI
 
 on:
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
 
 jobs:
-
-  build:
-
+  build-and-push:
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: write
+
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag my-image-name:${{ github.sha }}
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/listapranzo
+          docker build -t $IMAGE:latest -t $IMAGE:${{ github.sha }} .
+
+      - name: Push
+        run: |
+          IMAGE=ghcr.io/${{ github.repository_owner }}/listapranzo
+          docker push $IMAGE:latest
+          docker push $IMAGE:${{ github.sha }}
