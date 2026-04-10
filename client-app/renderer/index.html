@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ListaPranzo</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+  <!-- ── Screen: Login ── -->
+  <div id="screen-login" class="screen active">
+    <div class="login-box">
+      <div class="logo">🍽️</div>
+      <h1>ListaPranzo</h1>
+      <p id="login-subtitle">Inserisci il tuo nome per iniziare</p>
+      <input id="login-name" type="text" placeholder="Il tuo nome..." autocomplete="off" />
+      <div id="login-pw-section" style="display:none">
+        <input id="login-password" type="password" placeholder="Password..." autocomplete="new-password" style="margin-top:8px" />
+        <input id="login-password2" type="password" placeholder="Conferma password..." autocomplete="new-password" style="display:none; margin-top:8px" />
+      </div>
+      <button id="login-btn" class="btn btn-primary btn-block" style="margin-top:12px">Continua →</button>
+      <button id="login-back" class="btn-link-dark" style="display:none; margin-top:10px">← Cambia nome</button>
+    </div>
+  </div>
+
+  <!-- ── Screen: Voting ── -->
+  <div id="screen-voting" class="screen">
+    <header>
+      <h1>🍽️ ListaPranzo</h1>
+      <button id="btn-asporto-vote" class="btn-link btn-link-asporto">🛵 Asporto</button>
+      <div class="header-info">
+        <span id="hdr-name-vote" class="hdr-name"></span>
+        <button id="btn-change-name" class="btn-link">cambia</button>
+        <button id="btn-change-password" class="btn-link">🔑</button>
+        <span id="ws-dot-vote" class="dot dot-off"></span>
+      </div>
+    </header>
+    <main>
+      <div class="card">
+        <div class="card-head">
+          <h2>Dove andiamo oggi?</h2>
+          <span id="today-label" class="date-label"></span>
+        </div>
+        <div id="vote-timer" class="vote-timer" style="display:none">
+          ⏱ Tempo rimasto: <strong id="timer-countdown">--:--</strong>
+        </div>
+        <div id="places-list"><p class="empty">In attesa dei ristoranti dall'admin…</p></div>
+        <div id="vote-footer" class="vote-footer">
+          <button id="btn-submit-vote" class="btn btn-primary btn-block" disabled>Vota</button>
+          <div id="already-voted" style="display:none" class="already-voted-row">
+            <p class="feedback-text">✓ Il tuo voto è stato registrato!</p>
+            <button id="btn-change-vote" class="btn btn-secondary">Cambia voto</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Screen: Ordering ── -->
+  <div id="screen-ordering" class="screen">
+    <header>
+      <h1>🍽️ ListaPranzo</h1>
+      <button id="btn-asporto-order" class="btn-link btn-link-asporto">🛵 Asporto</button>
+      <div class="header-info">
+        <span id="hdr-name-order" class="hdr-name"></span>
+        <span id="ws-dot-order" class="dot dot-off"></span>
+      </div>
+    </header>
+    <main>
+      <!-- Split place picker (shown only in split mode before place selection) -->
+      <div id="split-pick-section" style="display:none">
+        <div class="card">
+          <h2>Da dove vuoi ordinare?</h2>
+          <p class="split-pick-hint">Oggi si ordina da più posti! Scegli il tuo:</p>
+          <div id="split-places-pick" class="split-places-pick"></div>
+        </div>
+      </div>
+      <!-- Order form -->
+      <div id="order-form-section">
+        <div class="card">
+          <h2 id="winning-place-title">📍 Ordina il tuo pranzo</h2>
+          <div id="order-votes-summary" class="order-votes-summary" style="display:none"></div>
+          <div class="order-form">
+            <p class="order-form-label">Scegli le voci:</p>
+            <div id="menu-checkboxes" class="menu-checkboxes"></div>
+            <p class="order-form-label" style="margin-top:12px">Aggiunta o variazione:</p>
+            <textarea id="order-custom" rows="2" placeholder="Es: senza cipolla, extra pane…"></textarea>
+            <button id="btn-submit-order" class="btn btn-primary btn-block" style="margin-top:10px">Invia Ordine</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Screen: Confirmation ── -->
+  <div id="screen-confirmation" class="screen">
+    <header>
+      <h1>🍽️ ListaPranzo</h1>
+      <button id="btn-asporto-confirm" class="btn-link btn-link-asporto">🛵 Asporto</button>
+      <div class="header-info">
+        <span id="hdr-name-confirm" class="hdr-name"></span>
+        <span id="ws-dot-confirm" class="dot dot-off"></span>
+      </div>
+    </header>
+    <main>
+      <div class="card confirm-card">
+        <div class="check-icon">✅</div>
+        <h2>Ordine ricevuto!</h2>
+        <p id="confirm-text"></p>
+        <button id="btn-edit-order" class="btn btn-secondary" style="margin-top:18px">✏️ Modifica ordine</button>
+        <button id="btn-cancel-order" class="btn btn-danger" style="margin-top:8px; display:none">🗑️ Annulla e scegli altro posto</button>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <h3 class="confirm-orders-title">Ordini dei colleghi</h3>
+        <div id="all-orders-list"><em class="empty-orders-msg">Nessun altro ordine ancora.</em></div>
+      </div>
+    </main>
+  </div>
+
+  <!-- ── Screen: Asporto ── -->
+  <div id="screen-asporto" class="screen">
+    <header>
+      <h1>🍽️ ListaPranzo</h1>
+      <div class="header-info">
+        <span id="hdr-name-asporto" class="hdr-name"></span>
+        <button id="btn-back-asporto" class="btn-link">← Torna</button>
+        <span id="ws-dot-asporto" class="dot dot-off"></span>
+      </div>
+    </header>
+    <main>
+      <div class="card">
+        <h2>🛵 Ordine Asporto</h2>
+        <p class="asporto-hint">Ordina da asporto da qualsiasi ristorante con menu disponibile, indipendentemente dalla votazione.</p>
+        <select id="asporto-place-select" class="asporto-select">
+          <option value="">— Scegli il ristorante —</option>
+        </select>
+        <div id="asporto-form-section" style="display:none; margin-top:14px">
+          <div id="asporto-checkboxes" class="menu-checkboxes"></div>
+          <p class="order-form-label" style="margin-top:12px">Aggiunta o variazione:</p>
+          <textarea id="asporto-custom" rows="2" placeholder="Es: senza cipolla, extra pane…"></textarea>
+          <button id="btn-submit-asporto" class="btn btn-primary btn-block" style="margin-top:10px">🛵 Invia Ordine Asporto</button>
+        </div>
+      </div>
+      <div class="card" id="my-asporto-card" style="display:none; margin-top:12px">
+        <h3 style="margin-bottom:12px">I tuoi ordini asporto di oggi</h3>
+        <div id="my-asporto-list"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

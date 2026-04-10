@@ -1,0 +1,12 @@
+{
+  "name": "listapranzo-admin",
+  "version": "1.0.0",
+  "description": "ListaPranzo Admin App",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "^29.1.0"
+  }
+}

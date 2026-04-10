@@ -1,0 +1,13 @@
+node_modules
+**/node_modules
+npm-debug.log*
+backend/data
+.git
+.gitignore
+README.md
+admin-app/main.js
+admin-app/preload.js
+admin-app/package*.json
+client-app/main.js
+client-app/preload.js
+client-app/package*.json
