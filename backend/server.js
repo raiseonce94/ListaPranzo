@@ -74,16 +74,18 @@ function autoSubmitPreOrders(date) {
 
   const allPreorders = db.preorders.find({ date });
 
-  // Group preorders by colleague
-  const byUser = {};
+  // Group preorders by normalized colleague name
+  const byUser = new Map();
   allPreorders.forEach(po => {
-    if (!byUser[po.colleague_name]) byUser[po.colleague_name] = [];
-    byUser[po.colleague_name].push(po);
+    const colleague_name = (po.colleague_name || '').trim();
+    if (!colleague_name) return;
+    if (!byUser.has(colleague_name)) byUser.set(colleague_name, []);
+    byUser.get(colleague_name).push(po);
   });
 
   const created = [];
 
-  Object.entries(byUser).forEach(([colleague_name, userPreorders]) => {
+  byUser.forEach((userPreorders, colleague_name) => {
     // Skip if this user already has an order today
     if (db.orders.findOne({ colleague_name, date })) return;
 
