@@ -7,12 +7,9 @@ let ws               = null;
 let wsReconnectTimer = null;
 let currentTab       = 'places';
 let places           = [];
-let sessionState     = { state: 'voting', winning_place_id: null };
-let currentVotes     = [];
-let currentOrders    = [];
-let currentAsportoOrders = [];
 let currentAuditLog = [];
-let adminTimerInterval = null;
+let adminGroups     = [];        // list of all groups
+let pendingGroupRequests = [];   // pending manager requests
 const today = new Date().toISOString().split('T')[0];
 
 // ── Init ─────────────────────────────────────────────────
@@ -46,24 +43,16 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('menu-date').addEventListener('change', loadMenus);
   document.getElementById('btn-clear-menus').addEventListener('click', clearMenus);
 
-  // Voting controls
-  document.getElementById('btn-close-voting').addEventListener('click', closeVoting);
-  document.getElementById('btn-reopen-voting').addEventListener('click', reopenVoting);
-  document.getElementById('btn-clear-votes').addEventListener('click', clearVotesAndRestart);
-  document.getElementById('btn-force-apply').addEventListener('click', forceApplyWinner);
-  document.getElementById('btn-force-split').addEventListener('click', forceSplit);
-  document.getElementById('btn-change-winner').addEventListener('click', changeWinner);
-  document.getElementById('btn-apply-split-change').addEventListener('click', changeSplit);
-  document.getElementById('btn-start-timer').addEventListener('click', startTimer);
-  document.getElementById('btn-stop-timer').addEventListener('click', stopTimer);
-
-  // Orders
-  document.getElementById('btn-generate').addEventListener('click', generateMessage);
-  document.getElementById('btn-generate-asporto').addEventListener('click', generateAsportoMessage);
-  document.getElementById('btn-clear-orders').addEventListener('click', clearAllOrders);
-  document.getElementById('btn-clear-asporto').addEventListener('click', clearAllAsportoOrders);
-  document.getElementById('asporto-orders-list').addEventListener('click', onAsportoOrdersListClick);
-  document.getElementById('asporto-messages-container').addEventListener('click', onAsportoMessageCardClick);
+  // Event delegation for dynamic lists
+  document.getElementById('places-list').addEventListener('click', onPlacesListClick);
+  document.getElementById('places-list').addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const presetInput = e.target.closest('[id^="preset-input-"]');
+    if (presetInput) { addPreset(parseInt(presetInput.id.replace('preset-input-', ''), 10)); return; }
+    const maxInput = e.target.closest('[id^="max-dishes-input-"]');
+    if (maxInput) saveMaxDishes(parseInt(maxInput.id.replace('max-dishes-input-', ''), 10));
+  });
+  document.getElementById('menus-list').addEventListener('click', onMenusListClick);
 
   // Data tab
   document.getElementById('btn-export').addEventListener('click', exportData);
@@ -77,36 +66,25 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reset-pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') confirmResetPassword(); });
   document.getElementById('users-list').addEventListener('click', onUsersListClick);
 
-  // Message card — delegated (buttons rendered dynamically)
-  document.getElementById('messages-container').addEventListener('click', onMessageCardClick);
-
-  // Event delegation for dynamic lists
-  document.getElementById('places-list').addEventListener('click', onPlacesListClick);
-  document.getElementById('places-list').addEventListener('keydown', e => {
-    if (e.key !== 'Enter') return;
-    const presetInput = e.target.closest('[id^="preset-input-"]');
-    if (presetInput) {
-      const id = parseInt(presetInput.id.replace('preset-input-', ''), 10);
-      addPreset(id);
-      return;
-    }
-    const maxInput = e.target.closest('[id^="max-dishes-input-"]');
-    if (maxInput) {
-      const id = parseInt(maxInput.id.replace('max-dishes-input-', ''), 10);
-      saveMaxDishes(id);
-    }
-  });
-  document.getElementById('menus-list').addEventListener('click', onMenusListClick);
-  document.getElementById('orders-list').addEventListener('click', onOrdersListClick);
-
   // Audit
   document.getElementById('audit-date').value = today;
   document.getElementById('audit-date').addEventListener('change', loadAuditLog);
+  document.getElementById('audit-group-filter').addEventListener('change', renderAuditLog);
+  document.getElementById('audit-action-filter').addEventListener('change', renderAuditLog);
   document.getElementById('btn-refresh-audit').addEventListener('click', loadAuditLog);
+  document.getElementById('btn-export-audit').addEventListener('click', exportAuditCSV);
   document.getElementById('btn-clear-audit').addEventListener('click', clearAuditLog);
 
+  // Groups tab
+  document.getElementById('btn-reload-groups').addEventListener('click', loadAdminGroupsTab);
+  document.getElementById('btn-create-group-admin').addEventListener('click', createGroupAdmin);
+  document.getElementById('new-group-name-admin').addEventListener('keydown', e => { if (e.key === 'Enter') createGroupAdmin(); });
+  document.getElementById('group-requests-list').addEventListener('click', onGroupsTabClick);
+  document.getElementById('admin-groups-list').addEventListener('click',   onGroupsTabClick);
+
   // Bootstrap
-  Promise.all([loadPlaces(), loadSession(), loadVotes(), loadOrders(), loadAsportoOrders(), loadAuditLog()]);
+  Promise.all([loadAdminGroups(), loadAdminUsers()]).then(() => loadAuditLog());
+  Promise.all([loadPlaces(), loadGroupRequests()]);
   connectWebSocket();
 });
 
@@ -144,10 +122,9 @@ function switchTab(tab) {
     s.classList.toggle('active', s.id === `tab-${tab}`)
   );
   if (tab === 'menus')  loadMenus();
-  if (tab === 'voting') loadVotes();
-  if (tab === 'orders') { loadOrders(); loadAsportoOrders(); }
   if (tab === 'users')  loadUsers();
   if (tab === 'audit')  loadAuditLog();
+  if (tab === 'groups') loadAdminGroupsTab();
 }
 
 // ── WebSocket ─────────────────────────────────────────────
@@ -186,15 +163,6 @@ function handleWSMessage(data) {
     case 'menus_updated':
       if (currentTab === 'menus') loadMenus();
       break;
-    case 'votes_updated':
-      if (data.date === today) { currentVotes = data.votes; renderVotes(); }
-      break;
-    case 'orders_updated':
-      if (data.date === today) { currentOrders = data.orders; renderOrders(); }
-      break;
-    case 'asporto_updated':
-      if (data.date === today) { currentAsportoOrders = data.orders; renderAsportoOrders(); }
-      break;
     case 'audit_updated': {
       const filterDate = document.getElementById('audit-date')?.value;
       if (!filterDate || data.entry.date === filterDate) {
@@ -203,12 +171,14 @@ function handleWSMessage(data) {
       }
       break;
     }
-    case 'session_updated':
-      if (data.session.date === today) {
-        sessionState = data.session;
-        renderSessionState();
-        if (sessionState.state === 'voting') updateAdminTimer();
-      }
+    case 'group_request_created':
+    case 'group_request_updated':
+      loadGroupRequests();
+      if (currentTab === 'groups') renderGroupRequests();
+      break;
+    case 'group_updated':
+      loadAdminGroups();
+      if (currentTab === 'groups') loadAdminGroupsTab();
       break;
   }
 }
@@ -232,45 +202,7 @@ async function loadPlaces() {
     const el = document.getElementById(`presets-panel-${id}`);
     if (el) el.style.display = 'block';
   });
-  populateWinnerSelects();
   if (currentTab === 'menus') loadMenus();
-}
-
-function populateWinnerSelects() {
-  ['force-winner-select', 'change-winner-select'].forEach(id => {
-    const sel = document.getElementById(id);
-    const prev = sel.value;
-    const firstOpt = sel.options[0].outerHTML;
-    sel.innerHTML = firstOpt + places.map(p =>
-      `<option value="${p.id}" ${sessionState.winning_place_id === p.id ? 'selected' : ''}>${esc(p.name)}</option>`
-    ).join('');
-    if (prev) sel.value = prev;
-    if (id === 'change-winner-select' && sessionState.winning_place_id)
-      sel.value = sessionState.winning_place_id;
-  });
-
-  // Populate split checkboxes (force-split-row — used during voting)
-  const splitCheckList = document.getElementById('split-check-list');
-  if (splitCheckList) {
-    splitCheckList.innerHTML = places.map(p =>
-      `<label class="split-check-label">
-        <input type="checkbox" class="split-place-check" value="${p.id}" />
-        ${esc(p.name)}
-      </label>`
-    ).join('');
-  }
-
-  // Populate change-split checkboxes (shown during ordering/closed when split active)
-  const changeSplitList = document.getElementById('change-split-check-list');
-  if (changeSplitList) {
-    const activeSplitIds = new Set(Array.isArray(sessionState.winning_place_ids) ? sessionState.winning_place_ids : []);
-    changeSplitList.innerHTML = places.map(p =>
-      `<label class="split-check-label">
-        <input type="checkbox" class="change-split-place-check" value="${p.id}" ${activeSplitIds.has(p.id) ? 'checked' : ''} />
-        ${esc(p.name)}
-      </label>`
-    ).join('');
-  }
 }
 
 function renderPlaces() {
@@ -458,442 +390,227 @@ async function clearMenus() {
   if (res) showToast('Menu cancellati!');
 }
 
-// ── Session ───────────────────────────────────────────────
+// ── Group selector helpers ────────────────────────────────
 
-async function loadSession() {
-  const session = await apiFetch(`/session/${today}`);
-  if (!session) return;
-  sessionState = session;
-  renderSessionState();
-}
-
-function renderSessionState() {
-  const badge          = document.getElementById('session-badge');
-  const btnClose       = document.getElementById('btn-close-voting');
-  const btnReopen      = document.getElementById('btn-reopen-voting');
-  const timerSection   = document.getElementById('timer-section');
-  const forceRow       = document.getElementById('force-winner-row');
-  const forceSplitRow  = document.getElementById('force-split-row');
-  const changeRow      = document.getElementById('change-winner-row');
-  const changeSplitRow = document.getElementById('change-split-row');
-
-  const labels = { voting: 'Votazione aperta', ordering: 'Ordini aperti', closed: 'Sessione chiusa' };
-  badge.textContent = labels[sessionState.state] || sessionState.state;
-  badge.className   = `badge badge-${sessionState.state}`;
-
-  const isSplit = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
-
-  btnClose.style.display  = sessionState.state === 'voting'   ? 'inline-block' : 'none';
-  btnReopen.style.display = sessionState.state !== 'voting'   ? 'inline-block' : 'none';
-
-  timerSection.style.display  = sessionState.state === 'voting' ? 'flex'  : 'none';
-  forceRow.style.display      = sessionState.state === 'voting' ? 'flex'  : 'none';
-  forceSplitRow.style.display = sessionState.state === 'voting' ? 'flex'  : 'none';
-  changeRow.style.display     = sessionState.state !== 'voting' && !isSplit ? 'flex' : 'none';
-  changeSplitRow.style.display= sessionState.state !== 'voting' && isSplit  ? 'flex' : 'none';
-
-  populateWinnerSelects();
-  if (sessionState.state === 'voting') updateAdminTimer();
-  else { clearInterval(adminTimerInterval); adminTimerInterval = null; }
-}
-
-async function closeVoting() {
-  // Use forced winner if selected, otherwise auto-pick by votes
-  const forcedId = parseInt(document.getElementById('force-winner-select').value, 10) || null;
-  let winning_place_id = forcedId;
-  if (!winning_place_id && currentVotes.length > 0) {
-    const counts = {};
-    currentVotes.forEach(v => { counts[v.place_id] = (counts[v.place_id] || 0) + 1; });
-    const topEntries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const topCount   = topEntries[0][1];
-    const tied       = topEntries.filter(([, c]) => c === topCount);
-    if (tied.length > 1) {
-      const names = tied.map(([pid]) => places.find(p => p.id === parseInt(pid, 10))?.name || pid).join(', ');
-      showToast(`⚠️ Parità tra: ${names}. Seleziona un vincitore forzato.`);
-      return;
-    }
-    winning_place_id = parseInt(topEntries[0][0], 10);
-  }
-  await apiFetch(`/session/${today}`, 'PUT', { state: 'ordering', winning_place_id });
-  showToast('Votazione chiusa — ordini aperti!');
-}
-
-async function reopenVoting() {
-  if (!confirm('Riaprire la votazione? Gli ordini già inseriti rimarranno salvati.')) return;
-  await apiFetch(`/session/${today}`, 'PUT', { state: 'voting', winning_place_id: null });
-  showToast('Votazione riaperta.');
-}
-
-async function clearVotesAndRestart() {
-  if (!confirm('Azzerare tutti i voti e riavviare la votazione da zero?\nQuesta operazione non può essere annullata.')) return;
-  const res = await apiFetch(`/votes/${today}`, 'DELETE');
-  if (res) showToast('Voti azzerati — votazione riavviata!');
-}
-
-async function forceApplyWinner() {
-  const id = parseInt(document.getElementById('force-winner-select').value, 10);
-  if (!id) { showToast('Seleziona un ristorante prima.'); return; }
-  await apiFetch(`/session/${today}`, 'PUT', { state: 'ordering', winning_place_id: id });
-  showToast('Vincitore forzato — ordini aperti!');
-}
-
-async function forceSplit() {
-  const ids = [...document.querySelectorAll('.split-place-check:checked')]
-    .map(c => parseInt(c.value, 10));
-  if (ids.length < 2) { showToast('Seleziona almeno 2 ristoranti per il split.'); return; }
-  await apiFetch(`/session/${today}`, 'PUT', { state: 'ordering', winning_place_ids: ids });
-  showToast(`Split attivato con ${ids.length} ristoranti — ordini aperti!`);
-}
-
-async function changeWinner() {
-  const id = parseInt(document.getElementById('change-winner-select').value, 10) || null;
-  await apiFetch(`/session/${today}/winner`, 'PATCH', { winning_place_id: id });
-  showToast('Vincitore aggiornato!');
-}
-
-async function changeSplit() {
-  const ids = [...document.querySelectorAll('.change-split-place-check:checked')]
-    .map(c => parseInt(c.value, 10));
-  if (!ids.length) { showToast('Seleziona almeno 1 ristorante.'); return; }
-  if (ids.length === 1) {
-    await apiFetch(`/session/${today}/winner`, 'PATCH', { winning_place_id: ids[0] });
-    showToast('Vincitore aggiornato (split rimosso)!');
-  } else {
-    await apiFetch(`/session/${today}`, 'PUT', { state: sessionState.state, winning_place_ids: ids });
-    showToast('Split aggiornato!');
+async function loadAdminGroups() {
+  adminGroups = (await apiFetch('/admin/groups')) || [];
+  // refresh the audit group filter dropdown
+  const sel  = document.getElementById('audit-group-filter');
+  if (sel) {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Tutti i gruppi —</option>' +
+      adminGroups.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+    if (prev) sel.value = prev;
   }
 }
 
-async function clearAllOrders() {
-  if (!confirm('Cancellare tutti gli ordini di oggi?')) return;
-  const res = await apiFetch(`/orders/${today}`, 'DELETE');
-  if (res) showToast('Ordini cancellati!');
+// ── Groups tab ────────────────────────────────────────────
+
+async function loadAdminGroupsTab() {
+  await Promise.all([loadAdminGroups(), loadAdminUsers(), loadGroupRequests()]);
+  renderAdminGroupsTab();
 }
 
-function onOrdersListClick(e) {
-  const btn = e.target.closest('[data-action="delete-order"]');
-  if (!btn) return;
-  deleteOrder(parseInt(btn.dataset.id, 10));
+async function loadGroupRequests() {
+  pendingGroupRequests = (await apiFetch('/admin/group-requests')) || [];
+  updateGroupRequestsBadge();
 }
 
-async function deleteOrder(id) {
-  await apiFetch(`/orders/${today}/${id}`, 'DELETE');
+function updateGroupRequestsBadge() {
+  const pending = pendingGroupRequests.filter(r => r.status === 'pending');
+  const badge   = document.getElementById('group-requests-badge');
+  if (!badge) return;
+  badge.style.display = pending.length ? 'inline' : 'none';
+  badge.textContent   = pending.length;
 }
 
-async function startTimer() {
-  const minutes = parseInt(document.getElementById('timer-minutes').value, 10);
-  if (!minutes || minutes < 1) { showToast('Inserisci un numero di minuti valido.'); return; }
-  await apiFetch(`/session/${today}/timer`, 'POST', { minutes });
+function renderAdminGroupsTab() {
+  renderGroupRequests();
+  renderAdminGroups();
 }
 
-async function stopTimer() {
-  await apiFetch(`/session/${today}/timer`, 'DELETE');
+function renderGroupRequests() {
+  const container = document.getElementById('group-requests-list');
+  if (!container) return;
+  const pending = pendingGroupRequests.filter(r => r.status === 'pending');
+  if (!pending.length) { container.innerHTML = '<p class="empty">Nessuna richiesta in attesa.</p>'; return; }
+  container.innerHTML = pending.map(r => `
+    <div class="group-req-item">
+      <div class="group-req-info">
+        <strong>${esc(r.user_name)}</strong> vuole creare il gruppo
+        "<strong>${esc(r.group_name)}</strong>"
+        <span class="audit-time">${new Date(r.created_at).toLocaleDateString('it-IT')}</span>
+      </div>
+      <div class="row gap-sm">
+        <button class="btn btn-primary btn-sm" data-action="approve-req" data-id="${r.id}">✓ Approva</button>
+        <button class="btn btn-danger btn-sm"  data-action="reject-req"  data-id="${r.id}">✗ Rifiuta</button>
+      </div>
+    </div>`).join('');
 }
 
-function updateAdminTimer() {
-  const display  = document.getElementById('admin-timer-display');
-  const btnStart = document.getElementById('btn-start-timer');
-  const btnStop  = document.getElementById('btn-stop-timer');
-  clearInterval(adminTimerInterval);
-  adminTimerInterval = null;
-  if (sessionState.timer_end) {
-    btnStart.style.display = 'none';
-    btnStop.style.display  = 'inline-block';
-    function tick() {
-      const remaining = Math.max(0, new Date(sessionState.timer_end) - Date.now());
-      const m = Math.floor(remaining / 60000);
-      const s = Math.floor((remaining % 60000) / 1000);
-      display.textContent = `${m}:${s.toString().padStart(2, '0')}`;
-      if (remaining === 0) { clearInterval(adminTimerInterval); adminTimerInterval = null; }
-    }
-    tick();
-    adminTimerInterval = setInterval(tick, 1000);
-  } else {
-    btnStart.style.display = 'inline-block';
-    btnStop.style.display  = 'none';
-    display.textContent    = '';
-  }
+// allAdminUsers is populated by loadAdminUsers() called alongside loadAdminGroups()
+let allAdminUsers = [];
+
+async function loadAdminUsers() {
+  allAdminUsers = (await apiFetch('/admin/users')) || [];
 }
 
-// ── Votes ─────────────────────────────────────────────────
-
-async function loadVotes() {
-  const votes = await apiFetch(`/votes/${today}`);
-  if (!votes) return;
-  currentVotes = votes;
-  renderVotes();
-}
-
-function renderVotes() {
-  const list = document.getElementById('votes-list');
-  if (!currentVotes.length) {
-    list.innerHTML = '<p class="empty">Nessun voto ancora.</p>';
-    return;
-  }
-
-  const groups = {};
-  currentVotes.forEach(v => {
-    if (!groups[v.place_id]) groups[v.place_id] = { name: v.place_name, votes: [] };
-    groups[v.place_id].votes.push({ name: v.colleague_name, voted_at: v.voted_at });
-  });
-
-  const total  = currentVotes.length;
-  const sorted = Object.entries(groups).sort((a, b) => b[1].votes.length - a[1].votes.length);
-
-  list.innerHTML = sorted.map(([, group], i) => {
-    const pct = Math.round((group.votes.length / total) * 100);
+function renderAdminGroups() {
+  const container = document.getElementById('admin-groups-list');
+  if (!container) return;
+  if (!adminGroups.length) { container.innerHTML = '<p class="empty">Nessun gruppo ancora.</p>'; return; }
+  const stateLabel = { voting: 'votazione', ordering: 'ordini', closed: 'chiuso' };
+  container.innerHTML = adminGroups.map(g => {
+    const managers = g.manager_names || (g.manager_name ? [g.manager_name] : []);
+    const managerPills = managers.map(m => `<span class="role-badge role-manager">👑 ${esc(m)}</span>`).join(' ');
+    const memberRows = (g.members || []).map(m => {
+      const isManager = m.role === 'manager';
+      return `
+        <div class="admin-member-row">
+          <span class="admin-member-name">${esc(m.name)}</span>
+          <span class="role-badge role-${m.role}">${m.role}</span>
+          <button class="btn btn-secondary btn-xs"
+            data-action="${isManager ? 'demote-member' : 'promote-member'}"
+            data-gid="${g.id}" data-name="${esc(m.name)}"
+            title="${isManager ? 'Declassa a utente' : 'Promuovi a manager'}">
+            ${isManager ? '↓ Utente' : '↑ Manager'}
+          </button>
+          <button class="btn btn-danger btn-xs"
+            data-action="remove-member-admin" data-gid="${g.id}" data-name="${esc(m.name)}"
+            title="Rimuovi dal gruppo">&times;</button>
+        </div>`;
+    }).join('');
     return `
-      <div class="vote-group" style="--delay:${i * 0.07}s">
-        <div class="vote-header">
-          <strong>${esc(group.name)}</strong>
-          <span class="vote-count">${group.votes.length} vot${group.votes.length === 1 ? 'o' : 'i'} (${pct}%)</span>
+      <div class="admin-group-item">
+        <div class="admin-group-header">
+          <div class="admin-group-info">
+            <strong id="group-name-display-${g.id}">${esc(g.name)}</strong>
+            ${managerPills}
+            ${g.today_session ? `<span class="badge badge-${g.today_session.state}" style="font-size:0.69rem;padding:2px 8px">${stateLabel[g.today_session.state] || g.today_session.state}</span>` : ''}
+            <span class="admin-group-meta">${g.member_count} ${g.member_count === 1 ? 'membro' : 'membri'}</span>
+          </div>
+          <div class="row gap-sm">
+            <button class="btn btn-secondary btn-sm" data-action="rename-group" data-id="${g.id}">✏️ Rinomina</button>
+            <button class="btn btn-danger btn-sm"    data-action="delete-group"  data-id="${g.id}">🗑️ Elimina</button>
+          </div>
         </div>
-        <div class="vote-bar"><div class="vote-bar-fill" style="width:${pct}%"></div></div>
-        <div class="vote-names">${group.votes.map(v => `${esc(v.name)}${fmtTime(v.voted_at)}`).join(', ')}</div>
+        <div class="admin-group-members">
+          ${memberRows || '<p class="empty" style="margin:4px 0">Nessun membro.</p>'}
+        </div>
+        <div class="admin-group-add-member" style="margin-top:12px">
+          <div class="add-member-label">Aggiungi utenti al gruppo:</div>
+          ${(() => {
+            const avail = allAdminUsers.filter(u => !u.group_id && !u.isAdmin);
+            if (!avail.length) return '<p class="empty" style="margin:4px 0;font-size:0.82rem">Nessun utente libero disponibile.</p>';
+            return `
+              <div class="add-member-checklist" id="add-member-list-${g.id}">
+                ${avail.map(u => `
+                  <label class="add-member-check-item">
+                    <input type="checkbox" value="${esc(u.name)}" />
+                    <span class="add-member-check-name">${esc(u.name)}</span>
+                  </label>`).join('')}
+              </div>
+              <div class="row gap-sm" style="margin-top:8px">
+                <button class="btn btn-secondary btn-sm" data-action="select-all-members" data-gid="${g.id}">Seleziona tutti</button>
+                <button class="btn btn-primary btn-sm" data-action="add-member-admin" data-gid="${g.id}">+ Aggiungi selezionati</button>
+              </div>`;
+          })()}
+        </div>
       </div>`;
   }).join('');
 }
 
-// ── Orders ────────────────────────────────────────────────
-
-async function loadOrders() {
-  const orders = await apiFetch(`/orders/${today}`);
-  if (!orders) return;
-  currentOrders = orders;
-  renderOrders();
-}
-
-function renderOrders() {
-  const list = document.getElementById('orders-list');
-  if (!currentOrders.length) {
-    list.innerHTML = '<p class="empty">Nessun ordine ancora.</p>';
-    return;
-  }
-
-  const isSplit = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
-
-  if (isSplit) {
-    const splitPids   = sessionState.winning_place_ids;
-    const splitPidSet = new Set(splitPids);
-    let html = '';
-
-    splitPids.forEach(pid => {
-      const placeOrders = currentOrders.filter(o => o.place_id === pid);
-      if (!placeOrders.length) return;
-      const placeName = places.find(p => p.id === pid)?.name || `Ristorante #${pid}`;
-      html += `<div class="orders-place-header">${esc(placeName)}</div>`;
-      html += placeOrders.map((o, i) => `
-        <div class="order-item" style="--delay:${i * 0.05}s">
-          <div class="order-item-info">
-            <strong>${esc(o.colleague_name)}${fmtTime(o.created_at)}</strong>
-            <span>${esc(o.order_text)}</span>
-          </div>
-          <button class="btn btn-danger btn-sm" data-action="delete-order" data-id="${o.id}" title="Elimina ordine">&times;</button>
-        </div>`).join('');
-    });
-
-    const otherOrders = currentOrders.filter(o => o.place_id == null || !splitPidSet.has(o.place_id));
-    if (otherOrders.length) {
-      html += `<div class="orders-place-header">Altro</div>`;
-      html += otherOrders.map((o, i) => `
-        <div class="order-item" style="--delay:${i * 0.05}s">
-          <div class="order-item-info">
-            <strong>${esc(o.colleague_name)}${fmtTime(o.created_at)}</strong>
-            <span>${esc(o.order_text)}</span>
-          </div>
-          <button class="btn btn-danger btn-sm" data-action="delete-order" data-id="${o.id}" title="Elimina ordine">&times;</button>
-        </div>`).join('');
-    }
-
-    list.innerHTML = html || '<p class="empty">Nessun ordine ancora.</p>';
-  } else {
-    list.innerHTML = currentOrders.map((o, i) => `
-      <div class="order-item" style="--delay:${i * 0.05}s">
-        <div class="order-item-info">
-          <strong>${esc(o.colleague_name)}${fmtTime(o.created_at)}</strong>
-          <span>${esc(o.order_text)}</span>
-        </div>
-        <button class="btn btn-danger btn-sm" data-action="delete-order" data-id="${o.id}" title="Elimina ordine">&times;</button>
-      </div>`).join('');
-  }
-}
-
-function generateMessage() {
-  const hasRegular = currentOrders.length > 0;
-  const hasAsporto = currentAsportoOrders.length > 0;
-  if (!hasRegular && !hasAsporto) { showToast('Nessun ordine da aggregare.'); return; }
-
-  const isSplit = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
-  const container = document.getElementById('messages-container');
-  const blocks = [];
-
-  // ── Regular orders
-  if (hasRegular) {
-    if (isSplit) {
-      const splitPids = new Set(sessionState.winning_place_ids);
-      sessionState.winning_place_ids.forEach(pid => {
-        const placeOrders = currentOrders.filter(o => o.place_id === pid);
-        if (!placeOrders.length) return;
-        const placeName = places.find(p => p.id === pid)?.name || `Ristorante #${pid}`;
-        const counts = {};
-        placeOrders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-        let msg = `Ciao,\n\n`;
-        Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `• ${count}x ${text}\n` : `• ${text}\n`; });
-        msg += `\nGrazie, Braconi x ${placeOrders.length}`;
-        blocks.push({ text: msg.trim(), placeName });
-      });
-      const otherOrders = currentOrders.filter(o => o.place_id == null || !splitPids.has(o.place_id));
-      if (otherOrders.length) {
-        const counts = {};
-        otherOrders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-        let msg = `Ciao,\n\n`;
-        Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `• ${count}x ${text}\n` : `• ${text}\n`; });
-        msg += `\nGrazie, Braconi x ${otherOrders.length}`;
-        blocks.push({ text: msg.trim(), placeName: 'Altro' });
-      }
-    } else {
-      const counts = {};
-      currentOrders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-      let msg = `Ciao,\n\n`;
-      Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `• ${count}x ${text}\n` : `• ${text}\n`; });
-      msg += `\nGrazie, Braconi x ${currentOrders.length}`;
-      const winnerName = places.find(p => p.id === sessionState.winning_place_id)?.name || '';
-      blocks.push({ text: msg.trim(), placeName: winnerName });
-    }
-  }
-
-  // ── Asporto orders (one block per place)
-  const asportoByPlace = {};
-  currentAsportoOrders.forEach(o => {
-    if (!asportoByPlace[o.place_id]) asportoByPlace[o.place_id] = { name: o.place_name, orders: [] };
-    asportoByPlace[o.place_id].orders.push(o);
-  });
-  Object.entries(asportoByPlace).forEach(([, { name, orders }]) => {
-    const counts = {};
-    orders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-    let msg = `Ciao,\n\n`;
-    Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `• ${count}x ${text}\n` : `• ${text}\n`; });
-    msg += `\nDA ASPORTO\nGrazie, Braconi x ${orders.length}`;
-    blocks.push({ text: msg.trim(), placeName: `${name} (Asporto)` });
-  });
-
-  // ── Render
-  const showLabels = blocks.length > 1;
-  const single = blocks.length === 1;
-  container.innerHTML = blocks.map(({ text, placeName }, i) => `
-    <div class="msg-block">
-      ${showLabels ? `<p class="msg-block-label">${esc(placeName)} (${i + 1} di ${blocks.length})</p>` : ''}
-      <textarea class="msg-textarea" rows="${Math.max(6, text.split('\n').length + 2)}" readonly>${esc(text)}</textarea>
-      <div class="row" style="justify-content:flex-end; margin-top:${single ? 10 : 8}px; gap:8px">
-        <button class="btn btn-primary${single ? '' : ' btn-sm'}" data-action="copy-msg" data-index="${i}">📋 Copia${single ? ' negli Appunti' : ''}</button>
-        <button class="btn btn-whatsapp${single ? '' : ' btn-sm'}" data-action="wa-msg" data-index="${i}">📲 WhatsApp</button>
-      </div>
-    </div>`).join('');
-
-  document.getElementById('message-card').style.display = 'block';
-}
-
-function onMessageCardClick(e) {
+function onGroupsTabClick(e) {
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
-  const textareas = document.getElementById('messages-container').querySelectorAll('.msg-textarea');
-  const idx = parseInt(btn.dataset.index, 10);
-  const text = textareas[idx]?.value || '';
-  if (btn.dataset.action === 'copy-msg') copyText(text);
-  if (btn.dataset.action === 'wa-msg')   openWhatsApp(text);
+  const id  = parseInt(btn.dataset.id, 10);
+  const gid = parseInt(btn.dataset.gid, 10);
+  const name = btn.dataset.name || '';
+  if (btn.dataset.action === 'approve-req')        approveGroupRequest(id);
+  if (btn.dataset.action === 'reject-req')          rejectGroupRequest(id);
+  if (btn.dataset.action === 'delete-group')        deleteAdminGroup(id);
+  if (btn.dataset.action === 'rename-group')        renameAdminGroup(id);
+  if (btn.dataset.action === 'add-member-admin')    addMemberAdmin(gid);
+  if (btn.dataset.action === 'select-all-members')  selectAllMembers(gid);
+  if (btn.dataset.action === 'remove-member-admin') removeMemberAdmin(gid, name);
+  if (btn.dataset.action === 'promote-member')      changeRoleAdmin(gid, name, 'manager');
+  if (btn.dataset.action === 'demote-member')       changeRoleAdmin(gid, name, 'user');
 }
 
-// ── Asporto orders (admin) ─────────────────────────────────────────────
-
-async function loadAsportoOrders() {
-  const orders = await apiFetch(`/asporto/${today}`);
-  if (!orders) return;
-  currentAsportoOrders = orders;
-  renderAsportoOrders();
+async function approveGroupRequest(id) {
+  const res = await apiFetch(`/admin/group-requests/${id}/approve`, 'PUT');
+  if (res) { showToast('✅ Gruppo creato e manager approvato!'); await loadAdminGroupsTab(); }
 }
 
-function renderAsportoOrders() {
-  const list = document.getElementById('asporto-orders-list');
-  if (!currentAsportoOrders.length) {
-    list.innerHTML = '<p class="empty">Nessun ordine asporto ancora.</p>';
-    return;
+async function rejectGroupRequest(id) {
+  if (!confirm('Rifiutare questa richiesta?')) return;
+  const res = await apiFetch(`/admin/group-requests/${id}/reject`, 'PUT');
+  if (res) { showToast('Richiesta rifiutata.'); await loadAdminGroupsTab(); }
+}
+
+async function deleteAdminGroup(id) {
+  const group = adminGroups.find(g => g.id === id);
+  if (!confirm(`Eliminare il gruppo "${group?.name}"?\nTutti i membri verranno rimossi dal gruppo.`)) return;
+  const res = await apiFetch(`/admin/groups/${id}`, 'DELETE');
+  if (res) { showToast('Gruppo eliminato.'); await loadAdminGroupsTab(); }
+}
+
+async function createGroupAdmin() {
+  const input = document.getElementById('new-group-name-admin');
+  const name = input?.value.trim();
+  if (!name) { showToast('Inserisci un nome per il gruppo.'); return; }
+  const res = await apiFetch('/admin/groups', 'POST', { name });
+  if (res) {
+    showToast(`Gruppo "${name}" creato.`);
+    if (input) input.value = '';
+    await loadAdminGroupsTab();
   }
-  const byPlace = {};
-  currentAsportoOrders.forEach(o => {
-    if (!byPlace[o.place_id]) byPlace[o.place_id] = { name: o.place_name, orders: [] };
-    byPlace[o.place_id].orders.push(o);
-  });
-  let html = '';
-  Object.entries(byPlace).forEach(([, { name, orders }]) => {
-    html += `<div class="orders-place-header">🛵 ${esc(name)}</div>`;
-    html += orders.map((o, i) => `
-      <div class="order-item" style="--delay:${i * 0.05}s">
-        <div class="order-item-info">
-          <strong>${esc(o.colleague_name)}${fmtTime(o.created_at)}</strong>
-          <span>${esc(o.order_text)}</span>
-        </div>
-        <button class="btn btn-danger btn-sm" data-action="delete-asporto" data-id="${o.id}" title="Elimina">&times;</button>
-      </div>`).join('');
-  });
-  list.innerHTML = html;
 }
 
-async function clearAllAsportoOrders() {
-  if (!confirm('Cancellare tutti gli ordini asporto di oggi?')) return;
-  const res = await apiFetch(`/asporto/${today}`, 'DELETE');
-  if (res) showToast('Ordini asporto cancellati!');
+async function renameAdminGroup(id) {
+  const group = adminGroups.find(g => g.id === id);
+  const newName = prompt('Nuovo nome del gruppo:', group?.name || '');
+  if (!newName?.trim() || newName.trim() === group?.name) return;
+  const res = await apiFetch(`/admin/groups/${id}`, 'PUT', { name: newName.trim() });
+  if (res) { showToast('Gruppo rinominato.'); await loadAdminGroupsTab(); }
 }
 
-function generateAsportoMessage() {
-  if (!currentAsportoOrders.length) { showToast('Nessun ordine asporto da aggregare.'); return; }
-
-  const container = document.getElementById('asporto-messages-container');
-  const byPlace = {};
-  currentAsportoOrders.forEach(o => {
-    if (!byPlace[o.place_id]) byPlace[o.place_id] = { name: o.place_name, orders: [] };
-    byPlace[o.place_id].orders.push(o);
-  });
-
-  const blocks = Object.values(byPlace).map(({ name, orders }) => {
-    const counts = {};
-    orders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
-    let msg = `Ciao,\n\n`;
-    Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `\u2022 ${count}x ${text}\n` : `\u2022 ${text}\n`; });
-    msg += `\nDA ASPORTO\nGrazie, Braconi x ${orders.length}`;
-    return { text: msg.trim(), placeName: name };
-  });
-
-  const showLabels = blocks.length > 1;
-  const single = blocks.length === 1;
-  container.innerHTML = blocks.map(({ text, placeName }, i) => `
-    <div class="msg-block">
-      ${showLabels ? `<p class="msg-block-label">${esc(placeName)} (${i + 1} di ${blocks.length})</p>` : ''}
-      <textarea class="msg-textarea" rows="${Math.max(6, text.split('\n').length + 2)}" readonly>${esc(text)}</textarea>
-      <div class="row" style="justify-content:flex-end; margin-top:${single ? 10 : 8}px; gap:8px">
-        <button class="btn btn-primary${single ? '' : ' btn-sm'}" data-action="copy-asporto-msg" data-index="${i}">\ud83d\udccb Copia${single ? ' negli Appunti' : ''}</button>
-        <button class="btn btn-whatsapp${single ? '' : ' btn-sm'}" data-action="wa-asporto-msg" data-index="${i}">\ud83d\udcf2 WhatsApp</button>
-      </div>
-    </div>`).join('');
-
-  document.getElementById('asporto-message-card').style.display = 'block';
+function selectAllMembers(gid) {
+  const list = document.getElementById(`add-member-list-${gid}`);
+  if (!list) return;
+  const boxes = list.querySelectorAll('input[type="checkbox"]');
+  const allChecked = [...boxes].every(b => b.checked);
+  boxes.forEach(b => { b.checked = !allChecked; });
 }
 
-function onAsportoMessageCardClick(e) {
-  const btn = e.target.closest('[data-action]');
-  if (!btn) return;
-  const textareas = document.getElementById('asporto-messages-container').querySelectorAll('.msg-textarea');
-  const idx = parseInt(btn.dataset.index, 10);
-  const text = textareas[idx]?.value || '';
-  if (btn.dataset.action === 'copy-asporto-msg') copyText(text);
-  if (btn.dataset.action === 'wa-asporto-msg')   openWhatsApp(text);
+async function addMemberAdmin(gid) {
+  const list = document.getElementById(`add-member-list-${gid}`);
+  const selected = list
+    ? [...list.querySelectorAll('input[type="checkbox"]:checked')].map(b => b.value)
+    : [];
+  if (!selected.length) { showToast('Seleziona almeno un utente.'); return; }
+  let added = 0;
+  for (const user_name of selected) {
+    const res = await apiFetch(`/admin/groups/${gid}/members`, 'POST', { user_name });
+    if (res) added++;
+  }
+  if (added) showToast(`${added} utente${added > 1 ? 'i' : ''} aggiunto${added > 1 ? 'i' : ''} al gruppo.`);
+  await loadAdminGroupsTab();
 }
 
-function onAsportoOrdersListClick(e) {
-  const btn = e.target.closest('[data-action="delete-asporto"]');
-  if (!btn) return;
-  apiFetch(`/asporto/${today}/${parseInt(btn.dataset.id, 10)}`, 'DELETE');
+async function removeMemberAdmin(gid, user_name) {
+  if (!confirm(`Rimuovere "${user_name}" dal gruppo?`)) return;
+  const res = await apiFetch(`/admin/groups/${gid}/members/${encodeURIComponent(user_name)}`, 'DELETE');
+  if (res) { showToast(`${user_name} rimosso.`); await loadAdminGroupsTab(); }
 }
 
+async function changeRoleAdmin(gid, user_name, role) {
+  const label = role === 'manager' ? 'manager' : 'utente';
+  const res = await apiFetch(`/admin/groups/${gid}/members/${encodeURIComponent(user_name)}/role`, 'PUT', { role });
+  if (res) { showToast(`${user_name} è ora ${label}.`); await loadAdminGroupsTab(); }
+}
+
+// ── Copy / WhatsApp ────────────────────────────────────────
 async function copyText(text) {
   try {
     if (window.electronAPI) {
@@ -1017,7 +734,8 @@ async function importData() {
   const res = await apiFetch('/data/import', 'POST', importFileData);
   const resultEl = document.getElementById('import-result');
   if (res) {
-    resultEl.textContent = `✅ Importazione completata: ${res.imported.places} ristoranti, ${res.imported.menus} menu, ${res.imported.users} utenti.`;
+    const c = res.imported;
+    resultEl.textContent = `✅ Importazione completata: ${c.places} ristoranti, ${c.menus} menu, ${c.users} utenti, ${c.groups} gruppi, ${c.orders} ordini.`;
     resultEl.className = 'import-result import-result-ok';
     resultEl.style.display = 'block';
     importFileData = null;
@@ -1078,61 +796,127 @@ function showToast(msg) {
 // ── Audit ─────────────────────────────────────────────────
 
 async function loadAuditLog() {
-  const date = document.getElementById('audit-date').value;
-  const params = date ? `?date=${encodeURIComponent(date)}` : '';
-  const entries = await apiFetch(`/audit${params}`);
+  const date    = document.getElementById('audit-date').value;
+  const groupId = document.getElementById('audit-group-filter')?.value || '';
+  const params  = [];
+  if (date)    params.push(`date=${encodeURIComponent(date)}`);
+  if (groupId) params.push(`group_id=${encodeURIComponent(groupId)}`);
+  const entries = await apiFetch(`/audit${params.length ? '?' + params.join('&') : ''}`);
   if (!entries) return;
   currentAuditLog = entries;
+  // Refresh group filter options
+  const sel  = document.getElementById('audit-group-filter');
+  const prev = sel.value;
+  sel.innerHTML = '<option value="">— Tutti i gruppi —</option>' +
+    adminGroups.map(g => `<option value="${g.id}">${esc(g.name)}</option>`).join('');
+  if (prev) sel.value = prev;
   renderAuditLog();
 }
 
 function renderAuditLog() {
-  const list = document.getElementById('audit-list');
-  if (!currentAuditLog.length) {
-    list.innerHTML = '<p class="empty">Nessuna attivit\u00e0 registrata.</p>';
+  const list        = document.getElementById('audit-list');
+  const statsEl     = document.getElementById('audit-stats');
+  const actionFilter = document.getElementById('audit-action-filter')?.value || '';
+
+  let entries = currentAuditLog;
+  if (actionFilter) entries = entries.filter(e => e.action === actionFilter);
+
+  // Stats bar
+  if (entries.length) {
+    const counts = {};
+    entries.forEach(e => { counts[e.action] = (counts[e.action] || 0) + 1; });
+    const statLabels = { vote:'Voti', order:'Ordini', asporto_order:'Asporto', session_change:'Sessioni',
+      votes_cleared:'Voti az.', orders_cleared:'Ordini az.', order_deleted:'Ord. el.',
+      asporto_cleared:'Asp. az.', asporto_deleted:'Asp. el.',
+      member_added:'Membri ag.', member_removed:'Membri rim.', group_created:'Gruppi' };
+    statsEl.innerHTML = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<span class="audit-stat-chip">${statLabels[k] || k}: <strong>${v}</strong></span>`)
+      .join('');
+    statsEl.style.display = 'flex';
+  } else {
+    statsEl.style.display = 'none';
+    statsEl.innerHTML = '';
+  }
+
+  if (!entries.length) {
+    list.innerHTML = '<p class="empty">Nessuna attività registrata.</p>';
     return;
   }
   const labelMap = {
-    vote:            { icon: '\ud83d\uddf3\ufe0f', label: 'Voto' },
-    order:           { icon: '\ud83c\udf7d\ufe0f', label: 'Ordine' },
-    asporto_order:   { icon: '\ud83d\udef5',  label: 'Asporto' },
-    session_change:  { icon: '\ud83d\udd04',  label: 'Sessione' },
-    votes_cleared:   { icon: '\ud83d\uddd1\ufe0f', label: 'Voti azzerati' },
-    orders_cleared:  { icon: '\ud83d\uddd1\ufe0f', label: 'Ordini cancellati' },
-    order_deleted:   { icon: '\u274c',  label: 'Ordine eliminato' },
-    asporto_cleared: { icon: '\ud83d\uddd1\ufe0f', label: 'Asporto cancellati' },
-    asporto_deleted: { icon: '\u274c',  label: 'Asporto eliminato' },
+    vote:            { icon: '🗳️', label: 'Voto' },
+    order:           { icon: '🍽️', label: 'Ordine' },
+    asporto_order:   { icon: '🛵',  label: 'Asporto' },
+    session_change:  { icon: '🔄',  label: 'Sessione' },
+    votes_cleared:   { icon: '🗑️', label: 'Voti azzerati' },
+    orders_cleared:  { icon: '🗑️', label: 'Ordini cancellati' },
+    order_deleted:   { icon: '❌',  label: 'Ordine eliminato' },
+    asporto_cleared: { icon: '🗑️', label: 'Asporto cancellati' },
+    asporto_deleted: { icon: '❌',  label: 'Asporto eliminato' },
+    member_added:    { icon: '➕',  label: 'Membro aggiunto' },
+    member_removed:  { icon: '➖',  label: 'Membro rimosso' },
+    group_created:   { icon: '🏢',  label: 'Gruppo creato' },
   };
-  list.innerHTML = currentAuditLog.map(e => {
-    const { icon, label } = labelMap[e.action] || { icon: '\ud83d\udcdd', label: e.action };
+  list.innerHTML = entries.map(e => {
+    const { icon, label } = labelMap[e.action] || { icon: '📝', label: e.action };
     const ts = new Date(e.timestamp);
     const dateStr = ts.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
     const timeStr = ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const groupName = adminGroups.find(g => g.id === e.group_id)?.name;
     let detail = '';
     if (e.action === 'vote') {
-      detail = `${esc(e.colleague_name)} \u2192 ${(e.place_names || []).map(esc).join(', ')}`;
+      detail = `${esc(e.colleague_name)} → ${(e.place_names || []).map(esc).join(', ')}`;
     } else if (e.action === 'order') {
       detail = `${esc(e.colleague_name)}: ${esc(e.order_text)}${e.place_name ? ` (${esc(e.place_name)})` : ''}`;
     } else if (e.action === 'asporto_order') {
       detail = `${esc(e.colleague_name)}: ${esc(e.order_text)} @ ${esc(e.place_name)}`;
     } else if (e.action === 'session_change') {
       const stateLabels = { voting: 'Votazione', ordering: 'Ordini', closed: 'Chiusa' };
-      detail = `${stateLabels[e.state] || e.state}${e.winning_place_names?.length ? ` \u2014 ${e.winning_place_names.map(esc).join(', ')}` : ''}`;
+      detail = `${stateLabels[e.state] || e.state}${e.winning_place_names?.length ? ` — ${e.winning_place_names.map(esc).join(', ')}` : ''}`;
     } else if (e.action === 'order_deleted' || e.action === 'asporto_deleted') {
       detail = esc(e.colleague_name);
+    } else if (e.action === 'member_added' || e.action === 'member_removed') {
+      detail = esc(e.user_name);
+    } else if (e.action === 'group_created') {
+      detail = `Manager: ${esc(e.manager_name)}`;
     }
     return `
       <div class="audit-item">
         <div class="audit-icon">${icon}</div>
         <div class="audit-body">
           <div class="audit-header">
-            <span class="audit-label">${label}</span>
+            <span class="audit-label">${label}${groupName ? ` <span class="audit-group-pill">${esc(groupName)}</span>` : ''}</span>
             <span class="audit-time">${dateStr} ${timeStr}</span>
           </div>
           ${detail ? `<div class="audit-detail">${detail}</div>` : ''}
         </div>
       </div>`;
   }).join('');
+}
+
+function exportAuditCSV() {
+  const actionFilter = document.getElementById('audit-action-filter')?.value || '';
+  let entries = currentAuditLog;
+  if (actionFilter) entries = entries.filter(e => e.action === actionFilter);
+  if (!entries.length) { showToast('Nessun dato da esportare.'); return; }
+  const rows = [['Timestamp', 'Data', 'Azione', 'Gruppo', 'Utente', 'Dettaglio']];
+  entries.forEach(e => {
+    const group = adminGroups.find(g => g.id === e.group_id)?.name || '';
+    let detail = '';
+    if (e.action === 'vote')           detail = `${e.colleague_name || ''} → ${(e.place_names || []).join(', ')}`;
+    else if (e.action === 'order')     detail = `${e.colleague_name || ''}: ${e.order_text || ''}${e.place_name ? ` (${e.place_name})` : ''}`;
+    else if (e.action === 'asporto_order') detail = `${e.colleague_name || ''}: ${e.order_text || ''} @ ${e.place_name || ''}`;
+    else if (e.action === 'session_change') detail = `${e.state || ''}${e.winning_place_names?.length ? ` — ${e.winning_place_names.join(', ')}` : ''}`;
+    else if (e.action === 'order_deleted' || e.action === 'asporto_deleted') detail = e.colleague_name || '';
+    else if (e.action === 'member_added' || e.action === 'member_removed') detail = e.user_name || '';
+    else if (e.action === 'group_created') detail = `Manager: ${e.manager_name || ''}`;
+    rows.push([e.timestamp, e.date, e.action, group, e.colleague_name || e.manager_name || '', detail]);
+  });
+  const csv  = rows.map(r => r.map(v => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a'); a.href = url; a.download = `audit-${today}.csv`; a.click();
+  URL.revokeObjectURL(url);
 }
 
 async function clearAuditLog() {

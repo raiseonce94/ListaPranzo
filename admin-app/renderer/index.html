@@ -22,22 +22,24 @@
   </div>
 
   <header>
-    <h1>🍽️ ListaPranzo — Admin</h1>
+    <div class="header-brand">
+      <span class="header-logo">🍽️</span>
+      <h1>ListaPranzo <span class="header-admin-badge">Admin</span></h1>
+    </div>
     <div class="header-right">
-      <span id="conn-label">disconnesso</span>
+      <span id="conn-label" class="conn-label">disconnesso</span>
       <span id="conn-dot" class="dot dot-off"></span>
       <button id="admin-logout-btn" class="btn-link-admin">Esci</button>
     </div>
   </header>
 
   <nav class="tabs">
-    <button class="tab-btn active" data-tab="places">Ristoranti</button>
-    <button class="tab-btn" data-tab="menus">Menu del Giorno</button>
-    <button class="tab-btn" data-tab="voting">Votazioni</button>
-    <button class="tab-btn" data-tab="orders">Ordini</button>
+    <button class="tab-btn active" data-tab="places">🏠 Ristoranti</button>
+    <button class="tab-btn" data-tab="menus">📅 Menu</button>
     <button class="tab-btn" data-tab="data">💾 Dati</button>
     <button class="tab-btn" data-tab="users">👤 Utenti</button>
     <button class="tab-btn" data-tab="audit">📋 Audit</button>
+    <button class="tab-btn" data-tab="groups">👥 Gruppi <span id="group-requests-badge" class="tab-badge" style="display:none">0</span></button>
   </nav>
 
   <main>
@@ -76,103 +78,18 @@
 
     </section>
 
-    <!-- ── TAB: Voting ── -->
-    <section id="tab-voting" class="tab">
-
-      <div class="card">
-        <div class="row space-between mb-md">
-          <div class="row gap-sm" style="align-items:center">
-            <h2 style="margin:0">Votazioni di Oggi</h2>
-            <span id="session-badge" class="badge badge-voting">Votazione aperta</span>
-          </div>
-          <div class="row gap-sm">
-            <button id="btn-close-voting" class="btn btn-warning">Chiudi Votazione</button>
-            <button id="btn-reopen-voting" class="btn btn-secondary" style="display:none">Riapri Votazione</button>
-            <button id="btn-clear-votes" class="btn btn-danger">Azzera Voti &amp; Riavvia</button>
-          </div>
-        </div>
-        <div id="force-winner-row" class="force-winner-row" style="display:none">
-          <span class="fw-label">Forza vincitore:</span>
-          <select id="force-winner-select" class="fw-select"><option value="">— auto da voti —</option></select>
-          <button id="btn-force-apply" class="btn btn-secondary btn-sm">Imposta &amp; Chiudi</button>
-        </div>
-        <div id="force-split-row" class="force-winner-row" style="display:none">
-          <span class="fw-label">Forza Split:</span>
-          <div id="split-check-list" class="split-check-list"></div>
-          <button id="btn-force-split" class="btn btn-primary btn-sm">✂️ Apri Split</button>
-        </div>
-        <div id="change-winner-row" class="force-winner-row" style="display:none">
-          <span class="fw-label">Vincitore:</span>
-          <select id="change-winner-select" class="fw-select"><option value="">— nessuno —</option></select>
-          <button id="btn-change-winner" class="btn btn-secondary btn-sm">Cambia</button>
-        </div>
-        <div id="change-split-row" class="force-winner-row" style="display:none">
-          <span class="fw-label">Split attivo:</span>
-          <div id="change-split-check-list" class="split-check-list"></div>
-          <button id="btn-apply-split-change" class="btn btn-secondary btn-sm">Aggiorna</button>
-        </div>
-        </div>
-        <div id="timer-section" class="timer-section" style="display:none">
-          <input id="timer-minutes" type="number" min="1" max="99" value="10" class="timer-input" />
-          <span style="font-size:0.85rem">min</span>
-          <button id="btn-start-timer" class="btn btn-warning btn-sm">⏱ Avvia Timer</button>
-          <button id="btn-stop-timer" class="btn btn-secondary btn-sm" style="display:none">⏹ Ferma</button>
-          <span id="admin-timer-display" class="timer-display"></span>
-        </div>
-        <div id="votes-list"><p class="empty">Nessun voto ancora.</p></div>
-      </div>
-
-    </section>
-
-    <!-- ── TAB: Orders ── -->
-    <section id="tab-orders" class="tab">
-
-      <div class="card">
-        <div class="row space-between mb-md">
-          <h2 style="margin:0">Ordini di Oggi</h2>
-          <div class="row gap-sm">
-            <button id="btn-generate" class="btn btn-primary">Genera Messaggio</button>
-            <button id="btn-clear-orders" class="btn btn-danger">Cancella Tutti</button>
-          </div>
-        </div>
-        <div id="orders-list"><p class="empty">Nessun ordine ancora.</p></div>
-      </div>
-
-      <div id="message-card" class="card" style="display:none">
-        <h2>Messaggio Pronto</h2>
-        <div id="messages-container"></div>
-      </div>
-
-      <div class="card" style="margin-top:12px">
-        <div class="row space-between mb-md">
-          <h2 style="margin:0">🛵 Ordini Asporto di Oggi</h2>
-          <div class="row gap-sm">
-            <button id="btn-generate-asporto" class="btn btn-primary">Genera Messaggio</button>
-            <button id="btn-clear-asporto" class="btn btn-danger">Cancella Tutti</button>
-          </div>
-        </div>
-        <div id="asporto-orders-list"><p class="empty">Nessun ordine asporto ancora.</p></div>
-      </div>
-
-      <div id="asporto-message-card" class="card" style="display:none; margin-top:12px">
-        <h2>🛵 Messaggio Asporto Pronto</h2>
-        <div id="asporto-messages-container"></div>
-      </div>
-
-    </section>
-
     <!-- ── TAB: Data ── -->
     <section id="tab-data" class="tab">
 
       <div class="card">
         <h2>📤 Esporta Dati</h2>
-        <p class="data-tab-desc">Scarica un backup JSON con ristoranti, menu, pre-ordini e utenti. Usalo per ripristinare i dati su una nuova installazione.</p>
-        <button id="btn-export" class="btn btn-primary">⬇️ Scarica Backup</button>
+        <p class="data-tab-desc">Scarica un backup JSON completo con ristoranti, menu, pre-ordini, utenti, gruppi, ordini, voti, sessioni, asporto e audit. Usalo per ripristinare tutto su una nuova installazione.</p>
+        <button id="btn-export" class="btn btn-primary">⬇️ Scarica Backup Completo</button>
       </div>
 
       <div class="card">
         <h2>📥 Importa Dati</h2>
-        <p class="data-tab-desc">Carica un file di backup JSON. <strong>Attenzione:</strong> sovrascrive ristoranti, menu, pre-ordini e utenti esistenti. Voti e ordini di oggi non vengono toccati.</p>
+        <p class="data-tab-desc">Carica un file di backup JSON. <strong>Attenzione:</strong> sovrascrive tutti i dati esistenti (ristoranti, menu, utenti, gruppi, ordini, voti, ecc.). L'account admin viene preservato.</p>
         <div class="row gap-sm" style="flex-wrap:wrap">
           <label class="btn btn-secondary import-file-label">
             📁 Scegli file JSON
@@ -217,15 +134,63 @@
       <div class="card">
         <div class="row space-between mb-md">
           <h2 style="margin:0">📋 Registro Audit</h2>
-          <div class="row gap-sm">
+          <div class="row gap-sm" style="flex-wrap:wrap; justify-content:flex-end">
             <input id="audit-date" type="date" />
+            <select id="audit-group-filter" style="min-width:140px"><option value="">— Tutti i gruppi —</option></select>
+            <select id="audit-action-filter" style="min-width:160px">
+              <option value="">— Tutte le azioni —</option>
+              <option value="vote">Voto</option>
+              <option value="order">Ordine</option>
+              <option value="asporto_order">Asporto</option>
+              <option value="session_change">Sessione</option>
+              <option value="votes_cleared">Voti azzerati</option>
+              <option value="orders_cleared">Ordini cancellati</option>
+              <option value="order_deleted">Ordine eliminato</option>
+              <option value="asporto_cleared">Asporto cancellati</option>
+              <option value="asporto_deleted">Asporto eliminato</option>
+              <option value="member_added">Membro aggiunto</option>
+              <option value="member_removed">Membro rimosso</option>
+              <option value="group_created">Gruppo creato</option>
+            </select>
             <button id="btn-refresh-audit" class="btn btn-secondary btn-sm">↻ Aggiorna</button>
+            <button id="btn-export-audit"  class="btn btn-secondary btn-sm">⬇️ CSV</button>
             <button id="btn-clear-audit" class="btn btn-danger btn-sm">🗑️ Cancella</button>
           </div>
         </div>
+        <div id="audit-stats" class="audit-stats-bar" style="display:none"></div>
         <div id="audit-list"><p class="empty">Nessuna attività registrata.</p></div>
       </div>
     </section>
+    <!-- ── TAB: Groups ── -->
+    <section id="tab-groups" class="tab">
+
+      <div class="card">
+        <div class="row space-between mb-md">
+          <h2 style="margin:0">Richieste di Creazione Gruppo</h2>
+          <button id="btn-reload-groups" class="btn btn-secondary btn-sm">↻ Aggiorna</button>
+        </div>
+        <div id="group-requests-list"><p class="empty">Caricamento…</p></div>
+      </div>
+
+      <div class="card">
+        <div class="row space-between mb-md">
+          <h2 style="margin:0">Crea Gruppo Direttamente</h2>
+        </div>
+        <div class="row gap-sm">
+          <input id="new-group-name-admin" type="text" placeholder="Nome gruppo…" style="flex:1" />
+          <button id="btn-create-group-admin" class="btn btn-primary">+ Crea</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row space-between mb-md">
+          <h2 style="margin:0">Gruppi Attivi</h2>
+        </div>
+        <div id="admin-groups-list"><p class="empty">Caricamento…</p></div>
+      </div>
+
+    </section>
+
   </main>
 
   <div id="toast" class="toast"></div>
