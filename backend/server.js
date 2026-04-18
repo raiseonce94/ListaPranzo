@@ -51,6 +51,7 @@ function autoCloseVoting(date) {
   }
   db.session.update({ date }, { state: 'ordering', winning_place_id, winning_place_ids: winning_place_id ? [winning_place_id] : [], timer_end: null });
   broadcast({ type: 'session_updated', session: db.session.findOne({ date }) });
+  autoSubmitPreOrders(date);
 }
 
 function armVoteTimer(date, timerEnd) {
@@ -58,6 +59,79 @@ function armVoteTimer(date, timerEnd) {
   const delay = new Date(timerEnd) - Date.now();
   if (delay <= 0) { autoCloseVoting(date); return; }
   voteTimers[date] = setTimeout(() => autoCloseVoting(date), delay);
+}
+
+// ── Server-side pre-order auto-submit ──────────────────────
+// Called whenever the session transitions to 'ordering'.
+// Mirrors the client-side autoSubmitFromPreOrder() logic so that
+// users who are offline when voting closes still get their order saved.
+function autoSubmitPreOrders(date) {
+  const session = db.session.findOne({ date });
+  if (!session || session.state !== 'ordering') return;
+
+  const splitPids = Array.isArray(session.winning_place_ids) && session.winning_place_ids.length > 1
+    ? session.winning_place_ids : [];
+
+  const allPreorders = db.preorders.find({ date });
+
+  // Group preorders by normalized colleague name
+  const byUser = new Map();
+  allPreorders.forEach(po => {
+    const colleague_name = (po.colleague_name || '').trim();
+    if (!colleague_name) return;
+    if (!byUser.has(colleague_name)) byUser.set(colleague_name, []);
+    byUser.get(colleague_name).push(po);
+  });
+
+  const created = [];
+
+  byUser.forEach((userPreorders, colleague_name) => {
+    // Skip if this user already has an order today
+    if (db.orders.findOne({ colleague_name, date })) return;
+
+    let pid = null;
+
+    if (splitPids.length > 0) {
+      // Split mode: find preorders for winning places that have content
+      const candidates = splitPids
+        .filter(id => {
+          const po = userPreorders.find(p => p.place_id === id);
+          return po && ((po.checks || []).length > 0 || (po.custom || '').trim());
+        });
+      if (candidates.length === 0) return; // no preorder for any winning place
+      if (candidates.length > 1) return;   // ambiguous — let user choose manually
+      pid = candidates[0];
+    } else {
+      pid = session.winning_place_id;
+      if (!pid) return;
+    }
+
+    const po = userPreorders.find(p => p.place_id === pid);
+    if (!po) return;
+
+    const checks = po.checks || [];
+    const custom = (po.custom || '').trim();
+    const parts  = custom ? [...checks, custom] : checks;
+    if (!parts.length) return;
+
+    const order_text = parts.join(', ');
+    db.orders.upsert(
+      { colleague_name, date },
+      { place_id: pid, order_text, created_at: new Date().toISOString() }
+    );
+    created.push({ colleague_name, place_id: pid, order_text });
+  });
+
+  if (created.length > 0) {
+    const orders = db.orders.find({ date })
+      .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+      .map(o => ({ ...o, place_name: db.places.findOne({ id: o.place_id })?.name || '' }));
+    broadcast({ type: 'orders_updated', date, orders });
+    created.forEach(({ colleague_name, place_id, order_text }) => {
+      const place_name_log = db.places.findOne({ id: place_id })?.name || '';
+      logAudit('order_auto', { date, colleague_name, place_name: place_name_log, order_text });
+    });
+  }
 }
 
 const app    = express();
@@ -191,6 +265,7 @@ app.put('/api/session/:date', (req, res) => {
   );
   const session = db.session.findOne({ date: req.params.date });
   broadcast({ type: 'session_updated', session });
+  if (state === 'ordering') autoSubmitPreOrders(req.params.date);
   const winning_place_names = ids.map(id => db.places.findOne({ id })?.name || String(id));
   logAudit('session_change', { date: req.params.date, state, winning_place_ids: ids, winning_place_names });
   res.json(session);
