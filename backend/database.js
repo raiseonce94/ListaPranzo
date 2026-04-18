@@ -84,13 +84,16 @@ class Store {
 }
 
 module.exports = {
-  places:    new Store('places'),
-  menus:     new Store('menus'),
-  session:   new Store('session'),
-  votes:     new Store('votes'),
-  orders:    new Store('orders'),
-  users:     new Store('users'),
-  preorders: new Store('preorders'),
-  asporto:   new Store('asporto'),
-  audit:     new Store('audit'),
+  places:         new Store('places'),
+  menus:          new Store('menus'),
+  session:        new Store('session'),
+  votes:          new Store('votes'),
+  orders:         new Store('orders'),
+  users:          new Store('users'),
+  preorders:      new Store('preorders'),
+  asporto:        new Store('asporto'),
+  audit:          new Store('audit'),
+  groups:         new Store('groups'),
+  group_requests: new Store('group_requests'),
+  join_requests:  new Store('join_requests'),
 };

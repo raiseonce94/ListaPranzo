@@ -16,27 +16,110 @@
     <div class="login-box">
       <div class="logo">🍽️</div>
       <h1>ListaPranzo</h1>
-      <p id="login-subtitle">Inserisci il tuo nome per iniziare</p>
-      <input id="login-name" type="text" placeholder="Il tuo nome..." autocomplete="off" />
-      <div id="login-pw-section" style="display:none">
-        <input id="login-password" type="password" placeholder="Password..." autocomplete="new-password" style="margin-top:8px" />
-        <input id="login-password2" type="password" placeholder="Conferma password..." autocomplete="new-password" style="display:none; margin-top:8px" />
+
+      <!-- Sign-in mode (default) -->
+      <div id="login-signin-form">
+        <p class="login-subtitle">Accedi al tuo account</p>
+        <input id="login-name"     type="text"     placeholder="Nome utente…"  autocomplete="username" />
+        <input id="login-password" type="password" placeholder="Password…"     autocomplete="current-password" style="margin-top:8px" />
+        <div id="login-error" class="login-error" style="display:none"></div>
+        <button id="login-btn" class="btn btn-primary btn-block" style="margin-top:12px">Accedi →</button>
+        <p class="login-switch-hint">Non hai un account? <button id="btn-show-register" class="btn-link">Registrati</button></p>
       </div>
-      <button id="login-btn" class="btn btn-primary btn-block" style="margin-top:12px">Continua →</button>
-      <button id="login-back" class="btn-link-dark" style="display:none; margin-top:10px">← Cambia nome</button>
+
+      <!-- Register mode (toggled) -->
+      <div id="login-register-form" style="display:none">
+        <p class="login-subtitle">Crea un nuovo account</p>
+        <input id="reg-name"      type="text"     placeholder="Scegli un nome utente…" autocomplete="username" />
+        <input id="reg-password"  type="password" placeholder="Password…"              autocomplete="new-password" style="margin-top:8px" />
+        <input id="reg-password2" type="password" placeholder="Conferma password…"     autocomplete="new-password" style="margin-top:8px" />
+        <div id="reg-error" class="login-error" style="display:none"></div>
+        <button id="register-btn" class="btn btn-primary btn-block" style="margin-top:12px">Registrati →</button>
+        <p class="login-switch-hint">Hai già un account? <button id="btn-show-signin" class="btn-link">Accedi</button></p>
+      </div>
     </div>
+  </div>
+
+  <!-- ── Screen: Setup Group (no group assigned yet) ── -->
+  <div id="screen-setup-group" class="screen">
+    <header>
+      <div class="header-brand">
+        <span class="header-logo">🍽️</span>
+        <h1>ListaPranzo</h1>
+      </div>
+      <div class="header-right">
+        <span id="hdr-name-setup" class="hdr-name"></span>
+        <button id="btn-change-name-setup" class="btn-link">Esci</button>
+      </div>
+    </header>
+    <main>
+
+      <!-- Pending: manager request -->
+      <div id="pending-manager-card" class="card setup-pending-card" style="display:none">
+        <div class="pending-icon">⏳</div>
+        <h2>Richiesta in attesa</h2>
+        <p id="pending-manager-text" class="pending-desc"></p>
+        <p class="pending-hint">L'admin esaminerà la tua richiesta. Riceverai una notifica non appena viene approvata.</p>
+        <button id="btn-cancel-group-request" class="btn btn-secondary btn-sm" style="margin-top:14px">Annulla richiesta</button>
+      </div>
+
+      <!-- Pending: join request -->
+      <div id="pending-join-card" class="card setup-pending-card" style="display:none">
+        <div class="pending-icon">⏳</div>
+        <h2>Richiesta di iscrizione</h2>
+        <p id="pending-join-text" class="pending-desc"></p>
+        <p class="pending-hint">Il manager del gruppo esaminerà la tua richiesta a breve.</p>
+        <button id="btn-cancel-join-request" class="btn btn-secondary btn-sm" style="margin-top:14px">Annulla richiesta</button>
+      </div>
+
+      <!-- No pending request: show options -->
+      <div id="setup-options" style="display:none">
+        <div class="card setup-welcome-card">
+          <div class="setup-welcome-icon">👋</div>
+          <h2>Benvenuto!</h2>
+          <p>Non sei ancora assegnato a nessun gruppo. Puoi creare un nuovo gruppo oppure unirti a uno esistente.</p>
+        </div>
+
+        <!-- Option A: Create a group -->
+        <div class="card setup-section-card">
+          <h3 class="setup-section-title">🏗️ Crea un nuovo gruppo</h3>
+          <p class="setup-section-desc">Diventa manager del tuo gruppo. L'admin approverà la richiesta.</p>
+          <div class="setup-form">
+            <input id="new-group-name" type="text" placeholder="Nome del gruppo (es. Team Dev)" maxlength="40" />
+            <button id="btn-request-group" class="btn btn-primary">Richiedi →</button>
+          </div>
+        </div>
+
+        <!-- Option B: Join existing group -->
+        <div class="card setup-section-card">
+          <h3 class="setup-section-title">🤝 Unisciti a un gruppo</h3>
+          <p class="setup-section-desc">Invia una richiesta al manager del gruppo.</p>
+          <div id="groups-list-setup" class="groups-list-setup">
+            <p class="empty">Nessun gruppo disponibile al momento.</p>
+          </div>
+        </div>
+      </div>
+
+    </main>
   </div>
 
   <!-- ── Screen: Voting ── -->
   <div id="screen-voting" class="screen">
     <header>
-      <h1>🍽️ ListaPranzo</h1>
-      <button id="btn-asporto-vote" class="btn-link btn-link-asporto">🛵 Asporto</button>
-      <div class="header-info">
+      <div class="header-brand">
+        <span class="header-logo">🍽️</span>
+        <h1>ListaPranzo</h1>
+      </div>
+      <div class="header-center">
+        <span id="hdr-group-vote" class="group-pill"></span>
+      </div>
+      <div class="header-right">
+        <button id="btn-asporto-vote" class="btn-link btn-link-asporto">🛵 Asporto</button>
+        <button id="btn-manager-vote" class="btn-link btn-manager hidden">⚙️ Gestisci</button>
         <span id="hdr-name-vote" class="hdr-name"></span>
-        <button id="btn-change-name" class="btn-link">cambia</button>
-        <button id="btn-change-password" class="btn-link">🔑</button>
+        <button id="btn-change-password" class="btn-link" title="Cambia password">🔑</button>
         <span id="ws-dot-vote" class="dot dot-off"></span>
+        <button id="btn-change-name" class="btn-link">Esci</button>
       </div>
     </header>
     <main>
@@ -63,15 +146,21 @@
   <!-- ── Screen: Ordering ── -->
   <div id="screen-ordering" class="screen">
     <header>
-      <h1>🍽️ ListaPranzo</h1>
-      <button id="btn-asporto-order" class="btn-link btn-link-asporto">🛵 Asporto</button>
-      <div class="header-info">
+      <div class="header-brand">
+        <span class="header-logo">🍽️</span>
+        <h1>ListaPranzo</h1>
+      </div>
+      <div class="header-center">
+        <span id="hdr-group-order" class="group-pill"></span>
+      </div>
+      <div class="header-right">
+        <button id="btn-asporto-order" class="btn-link btn-link-asporto">🛵 Asporto</button>
+        <button id="btn-manager-order" class="btn-link btn-manager hidden">⚙️ Gestisci</button>
         <span id="hdr-name-order" class="hdr-name"></span>
         <span id="ws-dot-order" class="dot dot-off"></span>
       </div>
     </header>
     <main>
-      <!-- Split place picker (shown only in split mode before place selection) -->
       <div id="split-pick-section" style="display:none">
         <div class="card">
           <h2>Da dove vuoi ordinare?</h2>
@@ -79,7 +168,6 @@
           <div id="split-places-pick" class="split-places-pick"></div>
         </div>
       </div>
-      <!-- Order form -->
       <div id="order-form-section">
         <div class="card">
           <h2 id="winning-place-title">📍 Ordina il tuo pranzo</h2>
@@ -99,9 +187,16 @@
   <!-- ── Screen: Confirmation ── -->
   <div id="screen-confirmation" class="screen">
     <header>
-      <h1>🍽️ ListaPranzo</h1>
-      <button id="btn-asporto-confirm" class="btn-link btn-link-asporto">🛵 Asporto</button>
-      <div class="header-info">
+      <div class="header-brand">
+        <span class="header-logo">🍽️</span>
+        <h1>ListaPranzo</h1>
+      </div>
+      <div class="header-center">
+        <span id="hdr-group-confirm" class="group-pill"></span>
+      </div>
+      <div class="header-right">
+        <button id="btn-asporto-confirm" class="btn-link btn-link-asporto">🛵 Asporto</button>
+        <button id="btn-manager-confirm" class="btn-link btn-manager hidden">⚙️ Gestisci</button>
         <span id="hdr-name-confirm" class="hdr-name"></span>
         <span id="ws-dot-confirm" class="dot dot-off"></span>
       </div>
@@ -111,8 +206,8 @@
         <div class="check-icon">✅</div>
         <h2>Ordine ricevuto!</h2>
         <p id="confirm-text"></p>
-        <button id="btn-edit-order" class="btn btn-secondary" style="margin-top:18px">✏️ Modifica ordine</button>
-        <button id="btn-cancel-order" class="btn btn-danger" style="margin-top:8px; display:none">🗑️ Annulla e scegli altro posto</button>
+        <button id="btn-edit-order"   class="btn btn-secondary" style="margin-top:18px">✏️ Modifica ordine</button>
+        <button id="btn-cancel-order" class="btn btn-danger"    style="margin-top:8px; display:none">🗑️ Annulla e scegli altro posto</button>
       </div>
       <div class="card" style="margin-top:14px">
         <h3 class="confirm-orders-title">Ordini dei colleghi</h3>
@@ -124,11 +219,14 @@
   <!-- ── Screen: Asporto ── -->
   <div id="screen-asporto" class="screen">
     <header>
-      <h1>🍽️ ListaPranzo</h1>
-      <div class="header-info">
+      <div class="header-brand">
+        <span class="header-logo">🍽️</span>
+        <h1>ListaPranzo</h1>
+      </div>
+      <div class="header-right">
         <span id="hdr-name-asporto" class="hdr-name"></span>
-        <button id="btn-back-asporto" class="btn-link">← Torna</button>
         <span id="ws-dot-asporto" class="dot dot-off"></span>
+        <button id="btn-back-asporto" class="btn-link">← Torna</button>
       </div>
     </header>
     <main>
@@ -141,7 +239,7 @@
         <div id="asporto-form-section" style="display:none; margin-top:14px">
           <div id="asporto-checkboxes" class="menu-checkboxes"></div>
           <p class="order-form-label" style="margin-top:12px">Aggiunta o variazione:</p>
-          <textarea id="asporto-custom" rows="2" placeholder="Es: senza cipolla, extra pane…"></textarea>
+          <textarea id="asporto-custom" rows="2" placeholder="Es: senza cipolla…"></textarea>
           <button id="btn-submit-asporto" class="btn btn-primary btn-block" style="margin-top:10px">🛵 Invia Ordine Asporto</button>
         </div>
       </div>
@@ -151,6 +249,135 @@
       </div>
     </main>
   </div>
+
+  <!-- ── Screen: Manager Dashboard ── -->
+  <div id="screen-manager" class="screen">
+    <header>
+      <div class="header-brand">
+        <span class="header-logo">⚙️</span>
+        <h1>Gestione</h1>
+      </div>
+      <div class="header-right">
+        <span id="hdr-group-manager" class="group-pill group-pill-light"></span>
+        <span id="ws-dot-manager" class="dot dot-off"></span>
+        <button id="btn-back-manager" class="btn-link">← Torna</button>
+      </div>
+    </header>
+    <main>
+
+      <!-- Session control card -->
+      <div class="card manager-card">
+        <div class="manager-card-head">
+          <h2>🗂 Sessione di oggi</h2>
+          <span id="mgr-session-badge" class="badge badge-voting">Votazione aperta</span>
+        </div>
+
+        <!-- Voting controls -->
+        <div id="mgr-voting-controls">
+
+          <!-- Timer + actions block -->
+          <div class="mgr-vote-action-block">
+            <!-- Left: timer + close -->
+            <div class="mgr-vote-action-left">
+              <div id="mgr-timer-section" class="mgr-timer-section">
+                <div class="mgr-timer-row">
+                  <span class="mgr-force-label">⏱ Timer:</span>
+                  <input id="mgr-timer-minutes" type="number" min="1" max="99" value="10" class="mgr-timer-input" />
+                  <span class="mgr-timer-label">min</span>
+                  <button id="btn-mgr-start-timer" class="btn btn-warning btn-sm">▶ Avvia</button>
+                  <button id="btn-mgr-stop-timer"  class="btn btn-secondary btn-sm" style="display:none">⏹ Ferma</button>
+                  <span id="mgr-timer-display" class="mgr-timer-display" style="display:none"></span>
+                </div>
+              </div>
+              <button id="btn-mgr-close-voting" class="btn btn-primary" style="margin-top:10px">🔒 Chiudi Votazione</button>
+            </div>
+            <!-- Right: force winner + clear -->
+            <div class="mgr-vote-action-right">
+              <div class="mgr-force-row" style="margin-bottom:8px">
+                <label class="mgr-force-label">Forza vincitore:</label>
+                <select id="mgr-force-winner-select" class="mgr-select"><option value="">— auto da voti —</option></select>
+              </div>
+              <button id="btn-mgr-clear-votes" class="btn btn-danger btn-sm" style="width:100%">🗑 Azzera Voti</button>
+            </div>
+          </div>
+
+          <!-- Split section -->
+          <div class="mgr-split-block">
+            <div class="mgr-split-block-header">
+              <span class="mgr-split-block-title">✂️ Split ordini</span>
+              <button id="btn-mgr-force-split" class="btn btn-primary btn-sm">✂️ Apri Split</button>
+            </div>
+            <div id="mgr-split-check-list" class="mgr-split-list"></div>
+          </div>
+
+        </div>
+
+        <!-- Ordering controls (hidden during voting) -->
+        <div id="mgr-ordering-controls" style="display:none">
+          <div class="mgr-force-row">
+            <label class="mgr-force-label">Vincitore:</label>
+            <select id="mgr-change-winner-select" class="mgr-select"><option value="">— nessuno —</option></select>
+            <button id="btn-mgr-change-winner" class="btn btn-secondary btn-sm">Cambia</button>
+          </div>
+          <div class="mgr-actions-row">
+            <button id="btn-mgr-reopen-voting" class="btn btn-secondary">↩ Riapri Votazione</button>
+            <button id="btn-mgr-close-session" class="btn btn-secondary btn-sm">🏁 Chiudi Sessione</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vote summary -->
+      <div class="card manager-card">
+        <h2>📊 Voti in tempo reale</h2>
+        <div id="mgr-votes-list"><p class="empty">Nessun voto ancora.</p></div>
+      </div>
+
+      <!-- Join requests -->
+      <div class="card manager-card" id="mgr-join-requests-card" style="display:none">
+        <h2>📩 Richieste di iscrizione</h2>
+        <div id="mgr-join-requests-list"></div>
+      </div>
+
+      <!-- Members -->
+      <div class="card manager-card">
+        <div class="manager-card-head">
+          <h2>👥 Membri del gruppo</h2>
+        </div>
+        <div id="mgr-members-list" class="mgr-members-list"></div>
+        <div class="mgr-add-member-row">
+          <input id="mgr-add-member-input" type="text" placeholder="Nome utente da aggiungere…" />
+          <button id="btn-mgr-add-member" class="btn btn-primary btn-sm">+ Aggiungi</button>
+        </div>
+      </div>
+
+      <!-- Orders + WhatsApp -->
+      <div class="card manager-card">
+        <div class="manager-card-head">
+          <h2>🍽️ Ordini del gruppo</h2>
+          <div class="row gap-sm">
+            <button id="btn-mgr-wa"           class="btn btn-whatsapp btn-sm">📲 WhatsApp</button>
+            <button id="btn-mgr-clear-orders" class="btn btn-danger btn-sm">🗑 Cancella tutti</button>
+          </div>
+        </div>
+        <div id="mgr-orders-list"><p class="empty">Nessun ordine.</p></div>
+        <div id="mgr-wa-block" style="display:none; margin-top:14px">
+          <div class="mgr-force-row" style="margin-bottom:10px">
+            <label class="mgr-force-label">Nome ordinazione:</label>
+            <input id="mgr-ordination-name" type="text" class="mgr-ordination-input" placeholder="es. Coinbasket Vecchio" style="flex:1" />
+            <button id="btn-mgr-regen-wa" class="btn btn-secondary btn-sm">↻ Rigenera</button>
+          </div>
+          <textarea id="mgr-wa-text" class="mgr-wa-textarea" rows="8" readonly></textarea>
+          <div class="row gap-sm" style="justify-content:flex-end; margin-top:8px">
+            <button id="btn-mgr-copy-msg"   class="btn btn-secondary btn-sm">📋 Copia</button>
+            <button id="btn-mgr-send-wa"    class="btn btn-whatsapp btn-sm">📲 Apri WhatsApp</button>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
 
   <script src="app.js"></script>
 </body>
