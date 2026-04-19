@@ -228,11 +228,27 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') mgrAddMember();
   });
   document.getElementById('btn-mgr-clear-orders').addEventListener('click',   mgrClearOrders);
-  document.getElementById('btn-mgr-wa').addEventListener('click',             mgrGenerateWA);
+  document.getElementById('btn-mgr-wa').addEventListener('click',             mgrConfirmAndGenerateWA);
   document.getElementById('btn-mgr-regen-wa').addEventListener('click',       mgrGenerateWA);
   document.getElementById('btn-mgr-copy-msg').addEventListener('click',       mgrCopyMsg);
   document.getElementById('btn-mgr-send-wa').addEventListener('click',        mgrOpenWA);
+  document.getElementById('btn-mgr-unlock-orders').addEventListener('click',  mgrUnlockOrders);
+  document.getElementById('btn-mgr-late-wa').addEventListener('click',        mgrGenerateLateWA);
+  document.getElementById('btn-mgr-copy-late-msg').addEventListener('click',  async () => {
+    const text = document.getElementById('mgr-wa-late-text').value;
+    try { await navigator.clipboard.writeText(text); showToast('Copiato!'); }
+    catch (_) { showToast('Copia fallita.'); }
+  });
+  document.getElementById('btn-mgr-send-late-wa').addEventListener('click', () => {
+    const text = document.getElementById('mgr-wa-late-text').value;
+    if (!text.trim()) return;
+    window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener,noreferrer');
+  });
   document.getElementById('mgr-orders-list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="delete-order"]');
+    if (btn) mgrDeleteOrder(parseInt(btn.dataset.id, 10));
+  });
+  document.getElementById('mgr-late-orders-list').addEventListener('click', e => {
     const btn = e.target.closest('[data-action="delete-order"]');
     if (btn) mgrDeleteOrder(parseInt(btn.dataset.id, 10));
   });
@@ -566,10 +582,16 @@ async function handleWSMessage(data) {
       break;
     case 'session_updated':
       if (data.session?.date === today && data.session?.group_id === userGroupId) {
+        const wasLocked = sessionState.orders_locked;
         sessionState = data.session;
         if (sessionState.state === 'ordering') {
           const autoSent = await autoSubmitFromPreOrder();
           if (!autoSent) updateScreen();
+          // If lock state changed and user is on ordering screen, update the button
+          if (wasLocked !== sessionState.orders_locked) {
+            const orderScr = document.getElementById('screen-ordering');
+            if (orderScr && orderScr.classList.contains('active')) renderOrderingScreen();
+          }
         } else {
           updateScreen();
           if (sessionState.state === 'voting') updateTimerDisplay();
@@ -867,6 +889,14 @@ function renderOrderingScreen() {
   const pickSection = document.getElementById('split-pick-section');
   const formSection = document.getElementById('order-form-section');
 
+  // Update submit button label based on lock state
+  const submitBtn = document.getElementById('btn-submit-order');
+  if (submitBtn) {
+    submitBtn.textContent = sessionState.orders_locked
+      ? '🕐 Aggiungi all\'ordine, mi scuso per essere ritardat(ari)o'
+      : 'Invia Ordine';
+  }
+
   if (isSplit && !selectedOrderPlaceId) {
     pickSection.style.display = 'block';
     formSection.style.display = 'none';
@@ -965,16 +995,21 @@ async function submitOrder() {
   const parts     = custom ? [...checked, custom] : checked;
   if (!parts.length) { document.getElementById('order-custom').focus(); return; }
   const orderText = parts.join(', ');
+  const isLate    = !!sessionState.orders_locked;
   const res = await apiFetch(gp('/orders'), 'POST', {
     colleague_name: collegeName,
     place_id: selectedOrderPlaceId || sessionState.winning_place_id || null,
-    order_text: orderText, date: today
+    order_text: orderText, date: today, is_late: isLate
   });
   if (res) {
     hasOrdered = true;
     selectedOrderPlaceId = selectedOrderPlaceId || sessionState.winning_place_id || null;
     currentOrderText = orderText;
-    setConfirmText(orderText);
+    if (isLate) {
+      setConfirmText(`⏰ Ordine in ritardo aggiunto: "${orderText}"`);
+    } else {
+      setConfirmText(orderText);
+    }
     showScreen('confirmation');
     renderConfirmationOrders();
   }
@@ -1184,6 +1219,7 @@ function renderMgrSessionState() {
   votingCtrl.style.display   = sessionState.state === 'voting'   ? 'block' : 'none';
   orderingCtrl.style.display = sessionState.state !== 'voting'   ? 'block' : 'none';
 
+  renderMgrLockState();
   updateMgrTimer();
 }
 
@@ -1238,26 +1274,47 @@ function renderMgrVotes() {
 }
 
 function renderMgrOrders() {
-  const list = document.getElementById('mgr-orders-list');
-  if (!allOrders.length) { list.innerHTML = '<p class="empty">Nessun ordine.</p>'; return; }
-  const isSplit  = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
-  if (isSplit) {
-    let html = '';
-    sessionState.winning_place_ids.forEach(pid => {
-      const placeOrders = allOrders.filter(o => o.place_id === pid);
-      if (!placeOrders.length) return;
-      const placeName = places.find(p => p.id === pid)?.name || `#${pid}`;
-      html += `<div class="mgr-orders-place-header">${esc(placeName)}</div>`;
-      html += placeOrders.map(o => `
+  const list         = document.getElementById('mgr-orders-list');
+  const lateSection  = document.getElementById('mgr-late-orders-section');
+  const lateList     = document.getElementById('mgr-late-orders-list');
+  const normalOrders = allOrders.filter(o => !o.is_late);
+  const lateOrders   = allOrders.filter(o => o.is_late);
+
+  // ── Normal orders ──
+  if (!normalOrders.length) {
+    list.innerHTML = '<p class="empty">Nessun ordine.</p>';
+  } else {
+    const isSplit = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
+    if (isSplit) {
+      let html = '';
+      sessionState.winning_place_ids.forEach(pid => {
+        const placeOrders = normalOrders.filter(o => o.place_id === pid);
+        if (!placeOrders.length) return;
+        const placeName = places.find(p => p.id === pid)?.name || `#${pid}`;
+        html += `<div class="mgr-orders-place-header">${esc(placeName)}</div>`;
+        html += placeOrders.map(o => `
+          <div class="mgr-order-item">
+            <div><strong>${esc(o.colleague_name)}</strong><span style="color:var(--text-muted)"> — ${esc(o.order_text)}</span></div>
+            <button class="btn btn-danger btn-xs" data-action="delete-order" data-id="${o.id}">&times;</button>
+          </div>`).join('');
+      });
+      list.innerHTML = html || '<p class="empty">Nessun ordine.</p>';
+    } else {
+      list.innerHTML = normalOrders.map(o => `
         <div class="mgr-order-item">
           <div><strong>${esc(o.colleague_name)}</strong><span style="color:var(--text-muted)"> — ${esc(o.order_text)}</span></div>
           <button class="btn btn-danger btn-xs" data-action="delete-order" data-id="${o.id}">&times;</button>
         </div>`).join('');
-    });
-    list.innerHTML = html || '<p class="empty">Nessun ordine.</p>';
+    }
+  }
+
+  // ── Late orders ──
+  if (!lateOrders.length) {
+    lateSection.style.display = 'none';
   } else {
-    list.innerHTML = allOrders.map(o => `
-      <div class="mgr-order-item">
+    lateSection.style.display = 'block';
+    lateList.innerHTML = lateOrders.map(o => `
+      <div class="mgr-order-item mgr-order-late">
         <div><strong>${esc(o.colleague_name)}</strong><span style="color:var(--text-muted)"> — ${esc(o.order_text)}</span></div>
         <button class="btn btn-danger btn-xs" data-action="delete-order" data-id="${o.id}">&times;</button>
       </div>`).join('');
@@ -1393,14 +1450,41 @@ async function mgrRejectJoin(rid) {
   await loadJoinRequests();
   renderMgrJoinRequests();
 }
+async function mgrConfirmAndGenerateWA() {
+  // If not yet locked, lock first
+  if (!sessionState.orders_locked) {
+    const res = await apiFetch(gp(`/session/${today}/lock-orders`), 'PUT', { manager_name: collegeName });
+    if (!res) return;
+    // sessionState will be updated via WS session_updated, but update locally too
+    sessionState = { ...sessionState, orders_locked: true };
+    renderMgrLockState();
+  }
+  mgrGenerateWA();
+}
+
+async function mgrUnlockOrders() {
+  const res = await apiFetch(gp(`/session/${today}/unlock-orders`), 'PUT', { manager_name: collegeName });
+  if (!res) return;
+  sessionState = { ...sessionState, orders_locked: false };
+  renderMgrLockState();
+  showToast('Ordini sbloccati.');
+}
+
+function renderMgrLockState() {
+  const banner  = document.getElementById('mgr-orders-locked-banner');
+  const waBtn   = document.getElementById('btn-mgr-wa');
+  const locked  = !!sessionState.orders_locked;
+  banner.style.display = locked ? 'flex' : 'none';
+  if (waBtn) waBtn.textContent = locked ? '📲 Rigenera WhatsApp' : '🔒 Conferma & WhatsApp';
+}
+
 function mgrGenerateWA() {
-  if (!allOrders.length) { showToast('Nessun ordine da aggregare.'); return; }
+  const normalOrders = allOrders.filter(o => !o.is_late);
+  if (!normalOrders.length) { showToast('Nessun ordine da aggregare.'); return; }
   const nameInput = document.getElementById('mgr-ordination-name');
   if (nameInput) {
-    // Restore last saved name, fallback to group name
     const savedName = localStorage.getItem('waOrderName_' + userGroupId);
     if (!nameInput.value.trim()) nameInput.value = savedName || userGroupName;
-    // Save on every change
     nameInput.onchange = () => {
       if (nameInput.value.trim()) localStorage.setItem('waOrderName_' + userGroupId, nameInput.value.trim());
     };
@@ -1409,26 +1493,46 @@ function mgrGenerateWA() {
   const blocks  = [];
   if (isSplit) {
     sessionState.winning_place_ids.forEach(pid => {
-      const placeOrders = allOrders.filter(o => o.place_id === pid);
+      const placeOrders = normalOrders.filter(o => o.place_id === pid);
       if (!placeOrders.length) return;
       const placeName = places.find(p => p.id === pid)?.name || `#${pid}`;
-      blocks.push(`[${placeName}]\n` + buildWAMessage(placeOrders));
+      blocks.push(`[${placeName}]\n` + buildWAMessage(placeOrders, 'Ciao'));
     });
   } else {
-    blocks.push(buildWAMessage(allOrders));
+    blocks.push(buildWAMessage(normalOrders, 'Ciao'));
   }
   const text = blocks.join('\n\n---\n\n');
   document.getElementById('mgr-wa-text').value = text;
   document.getElementById('mgr-wa-block').style.display = 'block';
 }
-function buildWAMessage(orders) {
+
+function mgrGenerateLateWA() {
+  const lateOrders = allOrders.filter(o => o.is_late);
+  if (!lateOrders.length) { showToast('Nessun ordine in ritardo da aggregare.'); return; }
+  const isSplit = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
+  const blocks  = [];
+  if (isSplit) {
+    sessionState.winning_place_ids.forEach(pid => {
+      const placeOrders = lateOrders.filter(o => o.place_id === pid);
+      if (!placeOrders.length) return;
+      const placeName = places.find(p => p.id === pid)?.name || `#${pid}`;
+      blocks.push(`[${placeName}]\n` + buildWAMessage(placeOrders, 'Aggiungo'));
+    });
+  } else {
+    blocks.push(buildWAMessage(lateOrders, 'Aggiungo'));
+  }
+  const text = blocks.join('\n\n---\n\n');
+  document.getElementById('mgr-wa-late-text').value = text;
+  document.getElementById('mgr-wa-late-block').style.display = 'block';
+}
+
+function buildWAMessage(orders, greeting = 'Ciao') {
   const counts = {};
   orders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
   const nameInput = document.getElementById('mgr-ordination-name');
   const name = nameInput?.value.trim() || localStorage.getItem('waOrderName_' + userGroupId) || userGroupName;
-  // Persist the name whenever a message is built
   if (name && name !== userGroupName) localStorage.setItem('waOrderName_' + userGroupId, name);
-  let msg = `Ciao,\n\n`;
+  let msg = `${greeting},\n\n`;
   Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `• ${count}x ${text}\n` : `• ${text}\n`; });
   msg += `\nGrazie, ${name} x ${orders.length}`;
   return msg.trim();

@@ -541,6 +541,37 @@ app.put('/api/preorders/:date/:colleague_name/:place_id', (req, res) => {
   res.json({ ok: true });
 });
 
+// ─── Lock / unlock orders ─────────────────────────────────
+app.put('/api/groups/:gid/session/:date/lock-orders', (req, res) => {
+  const group_id = parseInt(req.params.gid, 10);
+  const { date }  = req.params;
+  const { manager_name } = req.body;
+  const authErr = requireManager(manager_name, group_id);
+  if (authErr) return res.status(403).json({ error: authErr });
+  const session = db.session.findOne({ date, group_id });
+  if (!session) return res.status(404).json({ error: 'Sessione non trovata' });
+  db.session.update({ date, group_id }, { orders_locked: true });
+  const updated = db.session.findOne({ date, group_id });
+  broadcast({ type: 'session_updated', session: updated });
+  logAudit('orders_locked', { date, group_id });
+  res.json({ ok: true });
+});
+
+app.put('/api/groups/:gid/session/:date/unlock-orders', (req, res) => {
+  const group_id = parseInt(req.params.gid, 10);
+  const { date }  = req.params;
+  const { manager_name } = req.body;
+  const authErr = requireManager(manager_name, group_id);
+  if (authErr) return res.status(403).json({ error: authErr });
+  const session = db.session.findOne({ date, group_id });
+  if (!session) return res.status(404).json({ error: 'Sessione non trovata' });
+  db.session.update({ date, group_id }, { orders_locked: false });
+  const updated = db.session.findOne({ date, group_id });
+  broadcast({ type: 'session_updated', session: updated });
+  logAudit('orders_unlocked', { date, group_id });
+  res.json({ ok: true });
+});
+
 // ═══ GROUP ORDERS ═════════════════════════════════════════
 app.get('/api/groups/:gid/orders/:date', (req, res) => {
   const group_id = parseInt(req.params.gid, 10);
@@ -550,12 +581,15 @@ app.get('/api/groups/:gid/orders/:date', (req, res) => {
 });
 app.post('/api/groups/:gid/orders', (req, res) => {
   const group_id = parseInt(req.params.gid, 10);
-  const { colleague_name, place_id, order_text, date } = req.body;
+  const { colleague_name, place_id, order_text, date, is_late } = req.body;
   if (!colleague_name?.trim() || !order_text?.trim() || !date)
     return res.status(400).json({ error: 'colleague_name, order_text e date richiesti' });
+  const session = db.session.findOne({ date, group_id });
+  const ordersLocked = !!(session?.orders_locked);
   db.orders.upsert(
     { colleague_name: colleague_name.trim(), date, group_id },
-    { place_id: place_id ? parseInt(place_id, 10) : null, order_text: order_text.trim(), created_at: new Date().toISOString() }
+    { place_id: place_id ? parseInt(place_id, 10) : null, order_text: order_text.trim(),
+      is_late: ordersLocked || !!is_late, created_at: new Date().toISOString() }
   );
   const orders = db.orders.find({ date, group_id })
     .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))

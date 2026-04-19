@@ -114,10 +114,10 @@
         <span id="hdr-group-vote" class="group-pill"></span>
       </div>
       <div class="header-right">
-        <button id="btn-asporto-vote" class="btn-link btn-link-asporto">🛵 Asporto</button>
-        <button id="btn-manager-vote" class="btn-link btn-manager hidden">⚙️ Gestisci</button>
+        <button id="btn-asporto-vote" class="btn-link btn-link-asporto">🛵 <span class="hdr-btn-text">Asporto</span></button>
+        <button id="btn-manager-vote" class="btn-link btn-manager hidden">⚙️ <span class="hdr-btn-text">Gestisci</span></button>
         <span id="hdr-name-vote" class="hdr-name"></span>
-        <button id="btn-change-password" class="btn-link" title="Cambia password">🔑</button>
+        <button id="btn-change-password" class="btn-link hdr-btn-extra" title="Cambia password">🔑</button>
         <span id="ws-dot-vote" class="dot dot-off"></span>
         <button id="btn-change-name" class="btn-link">Esci</button>
       </div>
@@ -154,8 +154,8 @@
         <span id="hdr-group-order" class="group-pill"></span>
       </div>
       <div class="header-right">
-        <button id="btn-asporto-order" class="btn-link btn-link-asporto">🛵 Asporto</button>
-        <button id="btn-manager-order" class="btn-link btn-manager hidden">⚙️ Gestisci</button>
+        <button id="btn-asporto-order" class="btn-link btn-link-asporto">🛵 <span class="hdr-btn-text">Asporto</span></button>
+        <button id="btn-manager-order" class="btn-link btn-manager hidden">⚙️ <span class="hdr-btn-text">Gestisci</span></button>
         <span id="hdr-name-order" class="hdr-name"></span>
         <span id="ws-dot-order" class="dot dot-off"></span>
       </div>
@@ -195,8 +195,8 @@
         <span id="hdr-group-confirm" class="group-pill"></span>
       </div>
       <div class="header-right">
-        <button id="btn-asporto-confirm" class="btn-link btn-link-asporto">🛵 Asporto</button>
-        <button id="btn-manager-confirm" class="btn-link btn-manager hidden">⚙️ Gestisci</button>
+        <button id="btn-asporto-confirm" class="btn-link btn-link-asporto">🛵 <span class="hdr-btn-text">Asporto</span></button>
+        <button id="btn-manager-confirm" class="btn-link btn-manager hidden">⚙️ <span class="hdr-btn-text">Gestisci</span></button>
         <span id="hdr-name-confirm" class="hdr-name"></span>
         <span id="ws-dot-confirm" class="dot dot-off"></span>
       </div>
@@ -355,9 +355,13 @@
         <div class="manager-card-head">
           <h2>🍽️ Ordini del gruppo</h2>
           <div class="row gap-sm">
-            <button id="btn-mgr-wa"           class="btn btn-whatsapp btn-sm">📲 WhatsApp</button>
+            <button id="btn-mgr-wa"           class="btn btn-whatsapp btn-sm">🔒 Conferma &amp; WhatsApp</button>
             <button id="btn-mgr-clear-orders" class="btn btn-danger btn-sm">🗑 Cancella tutti</button>
           </div>
+        </div>
+        <div id="mgr-orders-locked-banner" class="mgr-locked-banner" style="display:none">
+          🔒 Ordini confermati — i nuovi arrivano come "in ritardo"
+          <button id="btn-mgr-unlock-orders" class="btn btn-secondary btn-xs">🔓 Sblocca</button>
         </div>
         <div id="mgr-orders-list"><p class="empty">Nessun ordine.</p></div>
         <div id="mgr-wa-block" style="display:none; margin-top:14px">
@@ -370,6 +374,22 @@
           <div class="row gap-sm" style="justify-content:flex-end; margin-top:8px">
             <button id="btn-mgr-copy-msg"   class="btn btn-secondary btn-sm">📋 Copia</button>
             <button id="btn-mgr-send-wa"    class="btn btn-whatsapp btn-sm">📲 Apri WhatsApp</button>
+          </div>
+        </div>
+
+        <!-- Late orders section -->
+        <div id="mgr-late-orders-section" style="display:none; margin-top:16px; border-top:2px solid var(--border); padding-top:12px">
+          <div class="manager-card-head" style="margin-bottom:8px">
+            <h3 class="mgr-late-title">⏰ Ordini in ritardo</h3>
+            <button id="btn-mgr-late-wa" class="btn btn-whatsapp btn-sm">📲 WhatsApp Ritardat(ar)i</button>
+          </div>
+          <div id="mgr-late-orders-list"></div>
+          <div id="mgr-wa-late-block" style="display:none; margin-top:14px">
+            <textarea id="mgr-wa-late-text" class="mgr-wa-textarea" rows="6" readonly></textarea>
+            <div class="row gap-sm" style="justify-content:flex-end; margin-top:8px">
+              <button id="btn-mgr-copy-late-msg" class="btn btn-secondary btn-sm">📋 Copia</button>
+              <button id="btn-mgr-send-late-wa"  class="btn btn-whatsapp btn-sm">📲 Apri WhatsApp</button>
+            </div>
           </div>
         </div>
       </div>
