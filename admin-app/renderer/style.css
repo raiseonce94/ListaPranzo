@@ -586,6 +586,14 @@ textarea { width:100%; resize:vertical }
   /* ── Safe area bottom ────────────────────────────────────────── */
   main { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) }
 }
+
+/* ── Extra-small phones (≤ 400px) ────────────────────────────── */
+@media (max-width: 400px) {
+  header { height: 46px; padding: 0 10px; gap: 4px }
+  .header-logo { font-size: 1rem }
+  header h1 { font-size: 0.75rem }
+  .tab-btn { padding: 10px 10px; font-size: 0.73rem }
+}
 /* ── Orders place header (split mode) ────────────────────────────── */
 .orders-place-header {
   font-size: 0.78rem;

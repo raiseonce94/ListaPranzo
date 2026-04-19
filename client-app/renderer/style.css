@@ -648,28 +648,49 @@ main::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
   header { padding: 0 12px; height: 52px; gap: 6px }
   .header-logo { font-size: 1.2rem }
   header h1 { font-size: 0.82rem }
-  .hdr-name { max-width: 70px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
-  .header-right { gap: 6px }
   .header-center { padding: 0 4px }
-  .group-pill { max-width: 110px; font-size: 0.72rem; padding: 3px 10px }
-  .btn-link { padding: 5px 8px; font-size: 0.69rem; min-height: 30px }
-  .btn-manager { padding: 5px 8px; font-size: 0.69rem }
-  .btn-link-asporto { padding: 5px 9px; font-size: 0.75rem }
+  .header-right { gap: 6px }
+  /* Shrink group pill */
+  .group-pill { max-width: 120px; font-size: 0.74rem; padding: 4px 10px }
+  /* Hide button text labels — show icon only */
+  .hdr-btn-text { display: none }
+  /* Hide secondary header elements */
+  .hdr-name { display: none }
+  .hdr-btn-extra { display: none }
+  /* Compact icon-only button sizes */
+  .btn-link { padding: 6px 9px; font-size: 0.72rem; min-height: 32px }
+  .btn-manager { padding: 6px 9px; font-size: 0.8rem }
+  .btn-link-asporto { padding: 6px 10px; font-size: 0.9rem; border-radius: 8px }
 
   /* ── Main padding ────────────────────────────────────────────── */
   main { padding: 10px }
 
   /* ── Login ───────────────────────────────────────────────────── */
-  #screen-login { overflow-y: auto }
-  .login-box {
-    width: calc(100% - 24px);
-    padding: 28px 18px 24px;
-    border-radius: var(--r-lg);
-    margin: 20px auto;
+  #screen-login {
+    overflow-y: auto;
+    align-items: flex-start;
+    padding: 16px 0 24px;
   }
-  .logo { font-size: 2.6rem }
-  .login-box h1 { font-size: 1.25rem }
-  .login-box input { padding: 13px 14px; font-size: 1rem }
+  .login-box {
+    width: calc(100% - 32px);
+    max-width: 400px;
+    margin: 0 auto;
+    padding: 32px 22px 28px;
+    border-radius: var(--r-lg);
+    /* remove entrance animation jank on scroll */
+    animation: none;
+  }
+  .logo { font-size: 2.8rem; margin-bottom: 4px }
+  .login-box h1 { font-size: 1.35rem }
+  .login-box input {
+    padding: 14px 14px;
+    font-size: 1rem;
+    border-radius: var(--r-sm);
+    /* better tap target */
+    min-height: 48px;
+  }
+  .btn.btn-primary.btn-block { min-height: 50px; font-size: 1rem }
+  .login-switch-hint { font-size: 0.86rem; margin-top: 18px }
 
   /* ── Cards ───────────────────────────────────────────────────── */
   .card { padding: 14px 13px }
@@ -719,11 +740,32 @@ main::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
   .setup-section-card { padding: 16px }
 
   /* ── Group pill in header ────────────────────────────────────── */
-  .group-pill { max-width: 90px; font-size: 0.65rem }
-
   /* ── Safe area bottom padding (notch phones) ─────────────────── */
   .vote-footer { padding-bottom: env(safe-area-inset-bottom, 0px) }
   #screen-ordering main { padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px)) }
+}
+
+/* ── Extra-small phones (≤ 380px) ────────────────────────────── */
+@media (max-width: 380px) {
+  header { height: 48px; padding: 0 10px; gap: 4px }
+  .header-logo { display: none }
+  .group-pill { max-width: 90px; font-size: 0.68rem; padding: 3px 8px }
+  .btn-link { padding: 5px 7px; font-size: 0.68rem }
+  .btn-manager { padding: 5px 7px }
+  .btn-link-asporto { padding: 5px 7px }
+  /* Even more compact login */
+  .login-box { padding: 24px 16px 20px }
+  .logo { font-size: 2.2rem }
+  .login-box h1 { font-size: 1.15rem }
+}
+
+/* ── Landscape phone — shrink login logo so form stays visible ── */
+@media (max-height: 500px) and (orientation: landscape) {
+  #screen-login { padding: 12px 0 16px }
+  .logo { font-size: 1.8rem; margin-bottom: 2px }
+  .login-box h1 { font-size: 1.1rem; margin-bottom: 4px }
+  .login-box p { margin-bottom: 14px }
+  .login-box { padding: 20px 22px 18px }
 }
 
 /* ══════════════════════════════════════════════════════════════════
@@ -1018,6 +1060,25 @@ main::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
   font-size: 0.88rem;
 }
 .mgr-order-item:last-child { border-bottom: none }
+.mgr-order-late {
+  background: rgba(232, 93, 4, 0.06);
+  border-left: 3px solid var(--primary);
+  padding-left: 8px;
+  border-radius: 0 4px 4px 0;
+}
+/* Locked banner */
+.mgr-locked-banner {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.35);
+  border-radius: var(--r-sm);
+  color: #065f46;
+  font-size: 0.83rem; font-weight: 600;
+  padding: 7px 10px; margin-bottom: 10px;
+}
+.mgr-late-title {
+  margin: 0; font-size: 0.92rem; font-weight: 700; color: var(--primary);
+}
 
 /* Join requests */
 .mgr-join-item {
