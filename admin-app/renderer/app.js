@@ -100,12 +100,14 @@ async function adminLogin() {
     errEl.style.display = 'block';
     return;
   }
+  if (res.token) sessionStorage.setItem('adminToken', res.token);
   sessionStorage.setItem('adminAuth', '1');
   document.getElementById('admin-login-overlay').classList.add('hidden');
 }
 
 function adminLogout() {
   sessionStorage.removeItem('adminAuth');
+  sessionStorage.removeItem('adminToken');
   document.getElementById('admin-password').value = '';
   document.getElementById('admin-login-err').style.display = 'none';
   document.getElementById('admin-login-overlay').classList.remove('hidden');
@@ -755,6 +757,8 @@ async function importData() {
 async function apiFetch(path, method = 'GET', body = null) {
   try {
     const opts = { method, headers: {} };
+    const token = sessionStorage.getItem('adminToken');
+    if (token) opts.headers['Authorization'] = `Bearer ${token}`;
     if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
     const res = await fetch(`${API}${path}`, opts);
     if (!res.ok) {
