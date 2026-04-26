@@ -158,6 +158,7 @@
         <button id="btn-manager-order" class="btn-link btn-manager hidden">⚙️ <span class="hdr-btn-text">Gestisci</span></button>
         <span id="hdr-name-order" class="hdr-name"></span>
         <span id="ws-dot-order" class="dot dot-off"></span>
+        <button id="btn-change-name-order" class="btn-link">Esci</button>
       </div>
     </header>
     <main>
@@ -199,6 +200,7 @@
         <button id="btn-manager-confirm" class="btn-link btn-manager hidden">⚙️ <span class="hdr-btn-text">Gestisci</span></button>
         <span id="hdr-name-confirm" class="hdr-name"></span>
         <span id="ws-dot-confirm" class="dot dot-off"></span>
+        <button id="btn-change-name-confirm" class="btn-link">Esci</button>
       </div>
     </header>
     <main>
@@ -396,6 +398,86 @@
         <!-- Late rounds container (dynamically rendered per round) -->
         <div id="mgr-late-rounds-container"></div>
       </div>
+
+    </main>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════ -->
+  <!-- SCREEN: Restaurant Dashboard                           -->
+  <!-- ══════════════════════════════════════════════════════ -->
+  <div id="screen-restaurant" class="screen">
+    <header class="screen-header">
+      <div class="hdr-left">
+        <span class="ws-pill"><span id="ws-dot-restaurant" class="dot dot-off"></span></span>
+        <span id="hdr-restaurant-name" class="hdr-role-badge">🍽️ Ristoratore</span>
+      </div>
+      <div class="hdr-center">
+        <span id="hdr-place-name" class="hdr-place-title"></span>
+      </div>
+      <div class="hdr-right">
+        <button class="btn-link" id="btn-restaurant-logout" title="Logout">🚪 Esci</button>
+      </div>
+    </header>
+
+    <nav class="restaurant-tabs">
+      <button class="rtab-btn active" data-rtab="menu">📋 Menu</button>
+      <button class="rtab-btn" data-rtab="orders">📦 Ordini</button>
+      <button class="rtab-btn" data-rtab="summary">📊 Riepilogo</button>
+      <button class="rtab-btn" data-rtab="asporto">🛵 Asporto</button>
+    </nav>
+
+    <main class="restaurant-main">
+
+      <!-- Orders tab -->
+      <section id="rtab-orders" class="rtab">
+        <div class="restaurant-date-bar">
+          <label for="restaurant-date">Data:</label>
+          <input id="restaurant-date" type="date" />
+          <button id="btn-restaurant-refresh" class="btn btn-secondary btn-sm">↻ Aggiorna</button>
+        </div>
+        <div id="restaurant-tables-list">
+          <p class="empty">Nessun ordine per oggi.</p>
+        </div>
+      </section>
+
+      <!-- Summary tab -->
+      <section id="rtab-summary" class="rtab">
+        <div class="restaurant-summary-header">
+          <h2>📊 Riepilogo piatti</h2>
+          <span id="restaurant-summary-date" class="restaurant-summary-date-label"></span>
+        </div>
+        <div id="restaurant-dish-aggregate">
+          <p class="empty">Nessun dato.</p>
+        </div>
+        <div class="restaurant-asporto-summary" style="margin-top:24px">
+          <h3>🛵 Asporto</h3>
+          <div id="restaurant-asporto-aggregate">
+            <p class="empty" style="font-size:0.85rem">Nessun asporto.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Asporto tab -->
+      <section id="rtab-asporto" class="rtab">
+        <div id="restaurant-asporto-list">
+          <p class="empty">Nessun ordine asporto.</p>
+        </div>
+      </section>
+
+      <!-- Menu tab -->
+      <section id="rtab-menu" class="rtab active">
+        <div class="restaurant-menu-editor">
+          <div class="restaurant-menu-head">
+            <h2>📋 Menu del giorno</h2>
+            <input id="restaurant-menu-date" type="date" />
+          </div>
+          <textarea id="restaurant-menu-text" rows="10" placeholder="Inserisci il menu del giorno…&#10;Es:&#10;Primo: Pasta al ragù&#10;Secondo: Pollo arrosto&#10;Contorno: Insalata mista"></textarea>
+          <div class="restaurant-menu-actions">
+            <button id="btn-restaurant-save-menu" class="btn btn-primary">💾 Salva Menu</button>
+            <button id="btn-restaurant-load-menu" class="btn btn-secondary btn-sm">↻ Ricarica</button>
+          </div>
+        </div>
+      </section>
 
     </main>
   </div>

@@ -1142,3 +1142,270 @@ main::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
   .mgr-wa-actions { flex-direction: column }
   .mgr-add-member-row { flex-direction: column }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   RESTAURANT DASHBOARD
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── Header ─────────────────────────────────────────────────────── */
+#screen-restaurant header.screen-header {
+  background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+  color: #fff;
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 3px solid var(--primary);
+  flex-shrink: 0;
+}
+#screen-restaurant .hdr-left  { display: flex; align-items: center; gap: 8px; flex: 1 }
+#screen-restaurant .hdr-center { flex: 2; text-align: center }
+#screen-restaurant .hdr-right  { display: flex; align-items: center; flex: 1; justify-content: flex-end }
+.hdr-role-badge {
+  font-size: 0.78rem; font-weight: 700; padding: 3px 10px;
+  background: var(--primary); color: #fff; border-radius: 20px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.hdr-place-title { font-size: 1.1rem; font-weight: 800; color: #fff; letter-spacing: -0.01em }
+#screen-restaurant .btn-link {
+  background: none; border: none; color: rgba(255,255,255,0.7);
+  cursor: pointer; font-size: 0.88rem; font-family: inherit;
+  padding: 6px 10px; border-radius: var(--r-sm);
+  transition: color var(--t), background var(--t);
+}
+#screen-restaurant .btn-link:hover { color: #fff; background: rgba(255,255,255,0.12) }
+
+/* ── Sub-tabs ──────────────────────────────────────────────────── */
+.restaurant-tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 2px solid var(--border);
+  padding: 0 16px;
+  gap: 0;
+  flex-shrink: 0;
+  overflow-x: auto;
+}
+.rtab-btn {
+  background: none; border: none; cursor: pointer;
+  padding: 12px 18px; font-size: 0.88rem; font-weight: 600;
+  color: var(--text-muted); font-family: inherit;
+  border-bottom: 3px solid transparent; margin-bottom: -2px;
+  transition: color var(--t), border-color var(--t);
+  white-space: nowrap;
+}
+.rtab-btn:hover  { color: var(--primary) }
+.rtab-btn.active { color: var(--primary); border-bottom-color: var(--primary) }
+
+/* ── Main content area ────────────────────────────────────────── */
+.restaurant-main { flex: 1; overflow-y: auto; padding: 0 }
+.rtab { display: none; padding: 20px }
+.rtab.active { display: block; animation: fadeUp 0.28s var(--ease) both }
+
+/* ── Date bar ─────────────────────────────────────────────────── */
+.restaurant-date-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 20px; flex-wrap: wrap;
+}
+.restaurant-date-bar label { font-size: 0.88rem; font-weight: 600; color: var(--text-muted) }
+.restaurant-date-bar input[type="date"] {
+  border: 2px solid var(--border); border-radius: var(--r-sm);
+  padding: 7px 12px; font-size: 0.9rem; font-family: inherit;
+  outline: none; background: var(--surface);
+  transition: border-color var(--t);
+}
+.restaurant-date-bar input[type="date"]:focus { border-color: var(--primary) }
+
+/* ── Table cards (each ordering group = one table) ─────────────── */
+.restaurant-table-card {
+  background: var(--surface);
+  border-radius: var(--r);
+  box-shadow: var(--shadow);
+  border-left: 5px solid var(--primary);
+  margin-bottom: 16px;
+  overflow: hidden;
+  animation: fadeUp 0.3s var(--ease) both;
+}
+.restaurant-table-head {
+  display: flex; align-items: center; gap: 10px;
+  padding: 13px 18px;
+  background: linear-gradient(135deg, var(--primary-light), #fff);
+  border-bottom: 1px solid var(--border);
+}
+.restaurant-table-icon { font-size: 1.2rem; flex-shrink: 0 }
+.restaurant-table-name { font-size: 1rem; font-weight: 700 }
+.restaurant-table-count {
+  display: flex; align-items: center; justify-content: center;
+  width: 42px; height: 42px; border-radius: 50%; flex-shrink: 0;
+  background: var(--primary); color: #fff;
+  font-size: 1rem; font-weight: 800;
+  box-shadow: 0 2px 8px rgba(232,93,4,0.35);
+}
+.restaurant-table-orders { padding: 10px 18px 14px }
+.restaurant-order-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--bg);
+  font-size: 0.9rem;
+}
+.restaurant-order-row:last-child { border-bottom: none }
+.restaurant-order-row.restaurant-order-late { background: #fffbeb; margin: 0 -18px; padding: 8px 18px; }
+.restaurant-order-name { font-weight: 600; min-width: 100px; color: var(--text) }
+.restaurant-order-text { flex: 1; color: var(--text-muted) }
+.restaurant-late-badge {
+  font-size: 0.7rem; font-weight: 700; padding: 2px 7px;
+  background: var(--warn-bg); color: var(--warn-text);
+  border: 1px solid var(--warn-border); border-radius: 20px;
+}
+
+/* ── Summary tab ──────────────────────────────────────────────── */
+.restaurant-summary-header {
+  display: flex; align-items: baseline; gap: 14px; margin-bottom: 20px;
+}
+.restaurant-summary-header h2 { margin: 0 }
+.restaurant-summary-date-label { font-size: 0.85rem; color: var(--text-muted) }
+.restaurant-aggregate-total {
+  font-size: 0.9rem; color: var(--text-muted); margin-bottom: 12px;
+}
+.restaurant-dish-list {
+  list-style: none; padding: 0; margin: 0;
+  display: flex; flex-direction: column; gap: 6px;
+}
+.restaurant-dish-row {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 16px;
+  background: var(--surface); border-radius: var(--r-sm);
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  border-left: 4px solid var(--primary);
+  font-size: 0.92rem;
+}
+.restaurant-dish-name { font-weight: 600; text-transform: capitalize }
+.restaurant-dish-count {
+  font-size: 1rem; font-weight: 800; color: var(--primary);
+  min-width: 36px; flex-shrink: 0;
+}
+.restaurant-asporto-summary { border-top: 2px solid var(--border); padding-top: 20px }
+.restaurant-asporto-summary h3 { margin: 0 0 14px; font-size: 1rem }
+
+/* ── Asporto tab ──────────────────────────────────────────────── */
+.restaurant-asporto-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 12px 16px; background: var(--surface);
+  border-radius: var(--r-sm); margin-bottom: 8px;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.05);
+  font-size: 0.9rem;
+}
+.restaurant-asporto-info { display: flex; flex-direction: column; gap: 3px; min-width: 140px }
+.restaurant-asporto-info strong { font-weight: 700 }
+.restaurant-asporto-location { font-size: 0.8rem; color: var(--text-muted) }
+.restaurant-asporto-text { flex: 1; color: var(--text-muted) }
+
+/* ── Menu editor ─────────────────────────────────────────────── */
+.restaurant-menu-editor {
+  max-width: 640px;
+  background: var(--surface); border-radius: var(--r);
+  box-shadow: var(--shadow); padding: 24px;
+}
+.restaurant-menu-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 16px; gap: 12px;
+}
+.restaurant-menu-head h2 { margin: 0; font-size: 1.1rem }
+.restaurant-menu-head input[type="date"] {
+  border: 2px solid var(--border); border-radius: var(--r-sm);
+  padding: 7px 12px; font-size: 0.9rem; font-family: inherit;
+  outline: none; background: var(--bg);
+  transition: border-color var(--t);
+}
+.restaurant-menu-head input[type="date"]:focus { border-color: var(--primary) }
+#restaurant-menu-text {
+  width: 100%; border: 2px solid var(--border); border-radius: var(--r-sm);
+  padding: 12px 14px; font-family: inherit; font-size: 0.9rem;
+  resize: vertical; background: var(--bg); color: var(--text);
+  outline: none; line-height: 1.6;
+  transition: border-color var(--t), background var(--t);
+  min-height: 180px;
+}
+#restaurant-menu-text:focus { border-color: var(--primary); background: #fff }
+.restaurant-menu-actions { display: flex; gap: 10px; margin-top: 14px; flex-wrap: wrap }
+
+/* ── Mobile adjustments ─────────────────────────────────────── */
+@media (max-width: 600px) {
+
+  /* Header — match app-wide compact height (52px) */
+  #screen-restaurant header.screen-header {
+    padding: 0 12px;
+    height: 52px;
+    gap: 6px;
+  }
+  /* Shrink & truncate the place name so it doesn't push other elements off */
+  .hdr-place-title {
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+  }
+  /* Hide the role badge on mobile — it's too wide and squeezes the logout button off-screen */
+  #screen-restaurant .hdr-role-badge { display: none }
+
+  /* Tab bar — flush to edges, no side padding */
+  .restaurant-tabs { padding: 0; justify-content: stretch }
+  .rtab-btn {
+    flex: 1;
+    padding: 13px 6px;
+    font-size: 0.78rem;
+    text-align: center;
+  }
+
+  /* Tab content */
+  .rtab { padding: 14px }
+
+  /* Date bar — full-width input, generous tap target */
+  .restaurant-date-bar { flex-wrap: wrap; gap: 8px }
+  .restaurant-date-bar input[type="date"] {
+    min-height: 48px;
+    font-size: 1rem;
+    flex: 1;
+  }
+  .restaurant-date-bar .btn-sm { min-height: 48px; padding: 10px 14px }
+
+  /* Scroll area — safe area bottom inset for notch phones */
+  .restaurant-main {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  /* Table cards */
+  .restaurant-table-head { padding: 10px 14px }
+  .restaurant-table-orders { padding: 8px 14px 12px }
+  /* Late row: negative margin matches the reduced padding above */
+  .restaurant-order-row.restaurant-order-late { margin: 0 -14px; padding: 8px 14px }
+
+  /* Order rows — wrap so text doesn't squeeze the name */
+  .restaurant-order-row { flex-wrap: wrap; gap: 4px }
+  .restaurant-order-name { min-width: 0; width: 100%; font-size: 0.88rem }
+  .restaurant-order-text { color: var(--text-muted); font-size: 0.86rem }
+
+  /* Summary header — stack date label below heading */
+  .restaurant-summary-header { flex-direction: column; gap: 4px; align-items: flex-start }
+  .restaurant-dish-row { padding: 9px 12px }
+
+  /* Asporto rows — wrap info+text on narrow screens */
+  .restaurant-asporto-row { flex-wrap: wrap; gap: 6px }
+  .restaurant-asporto-info { min-width: 0; width: 100% }
+  .restaurant-asporto-text { width: 100%; padding-left: 0 }
+
+  /* Menu editor — full-width, no extra shadow boxing */
+  .restaurant-menu-editor { padding: 14px; max-width: 100%; box-shadow: none; border-radius: var(--r-sm) }
+  .restaurant-menu-head { flex-direction: column; align-items: stretch; gap: 10px }
+  .restaurant-menu-head input[type="date"] { min-height: 48px; font-size: 1rem }
+  /* 16px prevents iOS from zooming into the textarea on focus */
+  #restaurant-menu-text { font-size: 16px; padding: 12px }
+  .restaurant-menu-actions .btn { min-height: 48px }
+  .restaurant-menu-actions { gap: 8px }
+}
+
+/* ── Extra-small phones (≤ 380px) ───────────────────────────── */
+@media (max-width: 380px) {
+  .hdr-place-title { max-width: 100px; font-size: 0.82rem }
+  .rtab-btn { font-size: 0.72rem; padding: 12px 4px }
+  .restaurant-table-name { font-size: 0.9rem }
+}

@@ -20,7 +20,7 @@ const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '30d';
 function generateToken(user) {
   const role = user.isAdmin ? 'admin' : (user.role || 'user');
   return jwt.sign(
-    { sub: user.name, name: user.name, role, group_id: user.group_id || null },
+    { sub: user.name, name: user.name, role, group_id: user.group_id || null, place_id: user.place_id || null },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
@@ -47,6 +47,14 @@ function requireAuth(req, res, next) {
 function requireAdmin(req, res, next) {
   if (!req.authUser) return res.status(401).json({ error: 'Autenticazione richiesta' });
   if (req.authUser.role !== 'admin') return res.status(403).json({ error: 'Accesso admin richiesto' });
+  next();
+}
+
+// Requires restaurant role via JWT
+function requireRestaurant(req, res, next) {
+  if (!req.authUser) return res.status(401).json({ error: 'Autenticazione richiesta' });
+  if (req.authUser.role !== 'restaurant') return res.status(403).json({ error: 'Accesso ristoratore richiesto' });
+  if (!req.authUser.place_id) return res.status(403).json({ error: 'Nessun ristorante associato all\u2019account' });
   next();
 }
 
@@ -311,7 +319,12 @@ function getUserInfo(name) {
   if (!user) return null;
   const role  = user.isAdmin ? 'admin' : (user.role || 'user');
   const group = user.group_id ? db.groups.findOne({ id: user.group_id }) : null;
-  return { name: user.name, role, group_id: user.group_id || null, group_name: group?.name || null };
+  const place = (role === 'restaurant' && user.place_id) ? db.places.findOne({ id: user.place_id }) : null;
+  return {
+    name: user.name, role,
+    group_id: user.group_id || null, group_name: group?.name || null,
+    place_id: user.place_id || null, place_name: place?.name || null
+  };
 }
 app.get('/api/users/exists/:name', (req, res) => {
   res.json({ exists: !!db.users.findOne({ name: decodeURIComponent(req.params.name).trim() }) });
@@ -335,7 +348,8 @@ app.post('/api/users/login', (req, res) => {
   const user = db.users.findOne({ name: name.trim() });
   if (!user) return res.status(401).json({ error: 'Utente non trovato' });
   if (!checkPassword(password, user.salt, user.hash)) return res.status(401).json({ error: 'Password errata' });
-  res.json({ ok: true, ...getUserInfo(name.trim()) });
+  const info = getUserInfo(name.trim());
+  res.json({ ok: true, ...info, token: generateToken(user) });
 });
 app.post('/api/users/change-password', (req, res) => {
   const { name, old_password, new_password } = req.body;
@@ -1009,6 +1023,94 @@ app.get('/api/audit', (req, res) => {
 app.delete('/api/audit', (req, res) => {
   const date = req.query.date;
   if (date) db.audit.remove({ date }); else db.audit.remove({});
+  res.json({ ok: true });
+});
+
+// ═══ RESTAURANT ═══════════════════════════════════════════
+app.get('/api/restaurant/me', requireRestaurant, (req, res) => {
+  const place = db.places.findOne({ id: req.authUser.place_id });
+  if (!place) return res.status(404).json({ error: 'Ristorante non trovato' });
+  res.json({ name: req.authUser.name, place });
+});
+
+app.get('/api/restaurant/orders/:date', requireRestaurant, (req, res) => {
+  const { date } = req.params;
+  const placeId = req.authUser.place_id;
+  const groupsMap = {};
+  db.groups.find().forEach(g => { groupsMap[g.id] = g.name; });
+  const orders = db.orders.find({ date }).filter(o => o.place_id === placeId);
+  const byGroup = {};
+  orders.forEach(o => {
+    const gid = o.group_id;
+    if (!byGroup[gid]) byGroup[gid] = { group_id: gid, group_name: groupsMap[gid] || `Gruppo ${gid}`, orders: [] };
+    byGroup[gid].orders.push({
+      id: o.id, colleague_name: o.colleague_name, order_text: o.order_text,
+      late_round: o.late_round || 0, is_late: !!o.is_late, created_at: o.created_at
+    });
+  });
+  // Sort each group's orders by creation time
+  Object.values(byGroup).forEach(g => g.orders.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || '')));
+  res.json(Object.values(byGroup));
+});
+
+app.get('/api/restaurant/asporto/:date', requireRestaurant, (req, res) => {
+  const { date } = req.params;
+  const placeId = req.authUser.place_id;
+  const orders = db.asporto.find({ date }).filter(o => o.place_id === placeId);
+  res.json(orders
+    .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+    .map(o => ({ id: o.id, colleague_name: o.colleague_name, order_text: o.order_text, location: o.location || '', created_at: o.created_at })));
+});
+
+app.get('/api/restaurant/menus/:date', requireRestaurant, (req, res) => {
+  const { date } = req.params;
+  const placeId = req.authUser.place_id;
+  const menu = db.menus.findOne({ date, place_id: placeId });
+  res.json(menu || { place_id: placeId, date, menu_text: '' });
+});
+
+app.post('/api/restaurant/menus', requireRestaurant, (req, res) => {
+  const { date, menu_text } = req.body;
+  if (!date) return res.status(400).json({ error: 'date richiesta' });
+  const placeId = req.authUser.place_id;
+  const existing = db.menus.findOne({ date, place_id: placeId });
+  if (existing) {
+    db.menus.update({ date, place_id: placeId }, { menu_text: menu_text || '' });
+  } else {
+    db.menus.insert({ place_id: placeId, date, menu_text: menu_text || '' });
+  }
+  broadcast({ type: 'menus_updated', date, place_id: placeId });
+  res.json({ ok: true });
+});
+
+// ═══ ADMIN: RESTAURANT ACCOUNTS ═══════════════════════════
+app.get('/api/admin/restaurant-accounts', requireAdmin, (req, res) => {
+  const accounts = db.users.find({ role: 'restaurant' }).map(u => {
+    const place = u.place_id ? db.places.findOne({ id: u.place_id }) : null;
+    return { name: u.name, place_id: u.place_id || null, place_name: place?.name || null };
+  });
+  res.json(accounts);
+});
+
+app.post('/api/admin/restaurant-accounts', requireAdmin, (req, res) => {
+  const { name, password, place_id } = req.body;
+  if (!name?.trim() || !password || !place_id)
+    return res.status(400).json({ error: 'name, password e place_id richiesti' });
+  const pid = parseInt(place_id, 10);
+  if (!db.places.findOne({ id: pid })) return res.status(404).json({ error: 'Ristorante non trovato' });
+  if (db.users.findOne({ name: name.trim() })) return res.status(409).json({ error: 'Nome già in uso' });
+  const { salt, hash } = makeHash(password);
+  const user = db.users.insert({ name: name.trim(), salt, hash, role: 'restaurant', group_id: null, place_id: pid });
+  logAudit('restaurant_account_created', { user_name: user.name, place_id: pid });
+  res.status(201).json({ ok: true, name: user.name, place_id: pid });
+});
+
+app.delete('/api/admin/restaurant-accounts/:name', requireAdmin, (req, res) => {
+  const name = decodeURIComponent(req.params.name);
+  const user = db.users.findOne({ name, role: 'restaurant' });
+  if (!user) return res.status(404).json({ error: 'Account ristoratore non trovato' });
+  db.users.remove({ name });
+  logAudit('restaurant_account_deleted', { user_name: name });
   res.json({ ok: true });
 });
 
