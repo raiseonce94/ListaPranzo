@@ -1079,6 +1079,9 @@ main::-webkit-scrollbar-thumb { background:var(--border); border-radius:2px }
 .mgr-late-title {
   margin: 0; font-size: 0.92rem; font-weight: 700; color: var(--primary);
 }
+.mgr-late-round-section {
+  margin-top: 16px; border-top: 2px solid var(--border); padding-top: 12px;
+}
 
 /* Join requests */
 .mgr-join-item {
