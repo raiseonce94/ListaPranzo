@@ -352,6 +352,22 @@
 
       <!-- Orders + WhatsApp -->
       <div class="card manager-card">
+
+      <!-- Asporto orders -->
+      <div class="card manager-card">
+        <div class="manager-card-head">
+          <h2>🛵 Ordini Asporto</h2>
+          <button id="btn-mgr-asporto-wa" class="btn btn-whatsapp btn-sm">📲 WhatsApp Asporto</button>
+        </div>
+        <div id="mgr-asporto-list"><p class="empty">Nessun ordine asporto.</p></div>
+        <div id="mgr-wa-asporto-block" style="display:none; margin-top:14px">
+          <textarea id="mgr-wa-asporto-text" class="mgr-wa-textarea" rows="6" readonly></textarea>
+          <div class="row gap-sm" style="justify-content:flex-end; margin-top:8px">
+            <button id="btn-mgr-copy-asporto-msg" class="btn btn-secondary btn-sm">📋 Copia</button>
+            <button id="btn-mgr-send-asporto-wa"  class="btn btn-whatsapp btn-sm">📲 Apri WhatsApp</button>
+          </div>
+        </div>
+      </div>
         <div class="manager-card-head">
           <h2>🍽️ Ordini del gruppo</h2>
           <div class="row gap-sm">
@@ -377,21 +393,8 @@
           </div>
         </div>
 
-        <!-- Late orders section -->
-        <div id="mgr-late-orders-section" style="display:none; margin-top:16px; border-top:2px solid var(--border); padding-top:12px">
-          <div class="manager-card-head" style="margin-bottom:8px">
-            <h3 class="mgr-late-title">⏰ Ordini in ritardo</h3>
-            <button id="btn-mgr-late-wa" class="btn btn-whatsapp btn-sm">📲 WhatsApp Ritardat(ar)i</button>
-          </div>
-          <div id="mgr-late-orders-list"></div>
-          <div id="mgr-wa-late-block" style="display:none; margin-top:14px">
-            <textarea id="mgr-wa-late-text" class="mgr-wa-textarea" rows="6" readonly></textarea>
-            <div class="row gap-sm" style="justify-content:flex-end; margin-top:8px">
-              <button id="btn-mgr-copy-late-msg" class="btn btn-secondary btn-sm">📋 Copia</button>
-              <button id="btn-mgr-send-late-wa"  class="btn btn-whatsapp btn-sm">📲 Apri WhatsApp</button>
-            </div>
-          </div>
-        </div>
+        <!-- Late rounds container (dynamically rendered per round) -->
+        <div id="mgr-late-rounds-container"></div>
       </div>
 
     </main>

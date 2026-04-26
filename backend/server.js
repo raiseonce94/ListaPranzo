@@ -550,10 +550,12 @@ app.put('/api/groups/:gid/session/:date/lock-orders', (req, res) => {
   if (authErr) return res.status(403).json({ error: authErr });
   const session = db.session.findOne({ date, group_id });
   if (!session) return res.status(404).json({ error: 'Sessione non trovata' });
-  db.session.update({ date, group_id }, { orders_locked: true });
+  const lockCount = typeof session.orders_lock_count === 'number' ? session.orders_lock_count
+    : (session.orders_locked ? 1 : 0);
+  db.session.update({ date, group_id }, { orders_lock_count: lockCount + 1 });
   const updated = db.session.findOne({ date, group_id });
   broadcast({ type: 'session_updated', session: updated });
-  logAudit('orders_locked', { date, group_id });
+  logAudit('orders_locked', { date, group_id, round: lockCount + 1 });
   res.json({ ok: true });
 });
 
@@ -565,7 +567,10 @@ app.put('/api/groups/:gid/session/:date/unlock-orders', (req, res) => {
   if (authErr) return res.status(403).json({ error: authErr });
   const session = db.session.findOne({ date, group_id });
   if (!session) return res.status(404).json({ error: 'Sessione non trovata' });
-  db.session.update({ date, group_id }, { orders_locked: false });
+  const lockCount = typeof session.orders_lock_count === 'number' ? session.orders_lock_count
+    : (session.orders_locked ? 1 : 0);
+  const newCount = Math.max(0, lockCount - 1);
+  db.session.update({ date, group_id }, { orders_lock_count: newCount });
   const updated = db.session.findOne({ date, group_id });
   broadcast({ type: 'session_updated', session: updated });
   logAudit('orders_unlocked', { date, group_id });
@@ -581,15 +586,16 @@ app.get('/api/groups/:gid/orders/:date', (req, res) => {
 });
 app.post('/api/groups/:gid/orders', (req, res) => {
   const group_id = parseInt(req.params.gid, 10);
-  const { colleague_name, place_id, order_text, date, is_late } = req.body;
+  const { colleague_name, place_id, order_text, date } = req.body;
   if (!colleague_name?.trim() || !order_text?.trim() || !date)
     return res.status(400).json({ error: 'colleague_name, order_text e date richiesti' });
   const session = db.session.findOne({ date, group_id });
-  const ordersLocked = !!(session?.orders_locked);
+  const lockCount = typeof session?.orders_lock_count === 'number' ? session.orders_lock_count
+    : (session?.orders_locked ? 1 : 0);
   db.orders.upsert(
     { colleague_name: colleague_name.trim(), date, group_id },
     { place_id: place_id ? parseInt(place_id, 10) : null, order_text: order_text.trim(),
-      is_late: ordersLocked || !!is_late, created_at: new Date().toISOString() }
+      late_round: lockCount, is_late: lockCount > 0, created_at: new Date().toISOString() }
   );
   const orders = db.orders.find({ date, group_id })
     .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
@@ -673,8 +679,13 @@ app.delete('/api/groups/:gid/asporto/:date/:aid', (req, res) => {
   const group_id = parseInt(req.params.gid, 10);
   const id = parseInt(req.params.aid, 10);
   const { date } = req.params;
+  const { manager_name, colleague_name } = req.body;
   const order = db.asporto.findOne({ id, date, group_id });
   if (!order) return res.status(404).json({ error: 'Asporto order not found' });
+  // Allow owner to delete their own order, or manager to delete any
+  const isOwner = colleague_name && order.colleague_name === colleague_name;
+  const isManager = manager_name && !requireManager(manager_name, group_id);
+  if (!isOwner && !isManager) return res.status(403).json({ error: 'Non autorizzato' });
   db.asporto.remove({ id, date, group_id });
   const orders = db.asporto.find({ date, group_id })
     .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))

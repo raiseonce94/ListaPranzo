@@ -32,8 +32,19 @@ let mgrJoinRequests   = [];
 let mgrMembers        = [];
 let mgrPendingCount   = 0;
 let availableGroups   = [];
+let lateRoundWATexts  = {};
 
 const today = new Date().toISOString().split('T')[0];
+
+// ── Lock-count helpers (backward compat with legacy orders_locked boolean) ────
+function sessionLockCount() {
+  if (typeof sessionState.orders_lock_count === 'number') return sessionState.orders_lock_count;
+  return sessionState.orders_locked ? 1 : 0;
+}
+function orderLateRound(o) {
+  if (typeof o.late_round === 'number') return o.late_round;
+  return o.is_late ? 1 : 0;
+}
 
 // ── Helpers ───────────────────────────────────────────────
 function esc(str) {
@@ -233,22 +244,44 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-mgr-copy-msg').addEventListener('click',       mgrCopyMsg);
   document.getElementById('btn-mgr-send-wa').addEventListener('click',        mgrOpenWA);
   document.getElementById('btn-mgr-unlock-orders').addEventListener('click',  mgrUnlockOrders);
-  document.getElementById('btn-mgr-late-wa').addEventListener('click',        mgrGenerateLateWA);
-  document.getElementById('btn-mgr-copy-late-msg').addEventListener('click',  async () => {
-    const text = document.getElementById('mgr-wa-late-text').value;
+  document.getElementById('mgr-late-rounds-container').addEventListener('click', async e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const round = parseInt(btn.dataset.round, 10);
+    const id    = btn.dataset.id ? parseInt(btn.dataset.id, 10) : null;
+    switch (btn.dataset.action) {
+      case 'confirm-late-round': await mgrConfirmLateRound(round); break;
+      case 'regen-late-wa':      mgrRegenLateWA(round); break;
+      case 'copy-late-msg': {
+        const text = lateRoundWATexts[round] || '';
+        try { await navigator.clipboard.writeText(text); showToast('Copiato!'); }
+        catch (_) { showToast('Copia fallita.'); }
+        break;
+      }
+      case 'send-late-wa': {
+        const text = lateRoundWATexts[round] || '';
+        if (text.trim()) window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener,noreferrer');
+        break;
+      }
+      case 'delete-late-order': if (id) mgrDeleteOrder(id); break;
+    }
+  });
+  document.getElementById('btn-mgr-asporto-wa').addEventListener('click',         mgrGenerateAsportoWA);
+  document.getElementById('btn-mgr-copy-asporto-msg').addEventListener('click',   async () => {
+    const text = document.getElementById('mgr-wa-asporto-text').value;
     try { await navigator.clipboard.writeText(text); showToast('Copiato!'); }
     catch (_) { showToast('Copia fallita.'); }
   });
-  document.getElementById('btn-mgr-send-late-wa').addEventListener('click', () => {
-    const text = document.getElementById('mgr-wa-late-text').value;
+  document.getElementById('btn-mgr-send-asporto-wa').addEventListener('click', () => {
+    const text = document.getElementById('mgr-wa-asporto-text').value;
     if (!text.trim()) return;
     window.open('https://wa.me/?text=' + encodeURIComponent(text), '_blank', 'noopener,noreferrer');
   });
-  document.getElementById('mgr-orders-list').addEventListener('click', e => {
-    const btn = e.target.closest('[data-action="delete-order"]');
-    if (btn) mgrDeleteOrder(parseInt(btn.dataset.id, 10));
+  document.getElementById('mgr-asporto-list').addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="delete-asporto-mgr"]');
+    if (btn) mgrDeleteAsportoOrder(parseInt(btn.dataset.id, 10));
   });
-  document.getElementById('mgr-late-orders-list').addEventListener('click', e => {
+  document.getElementById('mgr-orders-list').addEventListener('click', e => {
     const btn = e.target.closest('[data-action="delete-order"]');
     if (btn) mgrDeleteOrder(parseInt(btn.dataset.id, 10));
   });
@@ -582,13 +615,13 @@ async function handleWSMessage(data) {
       break;
     case 'session_updated':
       if (data.session?.date === today && data.session?.group_id === userGroupId) {
-        const wasLocked = sessionState.orders_locked;
+        const prevLockCount = sessionLockCount();
         sessionState = data.session;
         if (sessionState.state === 'ordering') {
           const autoSent = await autoSubmitFromPreOrder();
           if (!autoSent) updateScreen();
           // If lock state changed and user is on ordering screen, update the button
-          if (wasLocked !== sessionState.orders_locked) {
+          if (prevLockCount !== sessionLockCount()) {
             const orderScr = document.getElementById('screen-ordering');
             if (orderScr && orderScr.classList.contains('active')) renderOrderingScreen();
           }
@@ -627,6 +660,8 @@ async function handleWSMessage(data) {
         if (asportoScr.classList.contains('active')) {
           renderMyAsportoOrders(); renderAsportoScreen();
         }
+        if (document.getElementById('screen-manager').classList.contains('active'))
+          renderMgrAsportoOrders();
       }
       break;
     case 'group_request_updated':
@@ -892,7 +927,7 @@ function renderOrderingScreen() {
   // Update submit button label based on lock state
   const submitBtn = document.getElementById('btn-submit-order');
   if (submitBtn) {
-    submitBtn.textContent = sessionState.orders_locked
+    submitBtn.textContent = sessionLockCount() > 0
       ? '🕐 Aggiungi all\'ordine, mi scuso per essere ritardat(ari)o'
       : 'Invia Ordine';
   }
@@ -995,11 +1030,11 @@ async function submitOrder() {
   const parts     = custom ? [...checked, custom] : checked;
   if (!parts.length) { document.getElementById('order-custom').focus(); return; }
   const orderText = parts.join(', ');
-  const isLate    = !!sessionState.orders_locked;
+  const isLate    = sessionLockCount() > 0;
   const res = await apiFetch(gp('/orders'), 'POST', {
     colleague_name: collegeName,
     place_id: selectedOrderPlaceId || sessionState.winning_place_id || null,
-    order_text: orderText, date: today, is_late: isLate
+    order_text: orderText, date: today
   });
   if (res) {
     hasOrdered = true;
@@ -1146,7 +1181,7 @@ async function submitAsportoOrder() {
   if (res) { showToast('🛵 Ordine asporto salvato!'); renderAsportoScreen(); }
 }
 async function deleteMyAsportoOrder(id) {
-  await apiFetch(gp(`/asporto/${today}/${id}`), 'DELETE');
+  await apiFetch(gp(`/asporto/${today}/${id}`), 'DELETE', { colleague_name: collegeName });
 }
 
 // ═══ MANAGER DASHBOARD ════════════════════════════════════
@@ -1158,6 +1193,7 @@ async function loadMgrData() {
   await Promise.all([
     loadVotes(),
     loadAllOrders(),
+    loadAsportoOrders(),
     loadJoinRequests()
   ]);
 }
@@ -1177,6 +1213,7 @@ async function renderManagerScreen() {
   renderMgrSessionState();
   renderMgrVotes();
   renderMgrOrders();
+  renderMgrAsportoOrders();
   renderMgrJoinRequests();
   await loadMgrMembers();
 }
@@ -1275,10 +1312,7 @@ function renderMgrVotes() {
 
 function renderMgrOrders() {
   const list         = document.getElementById('mgr-orders-list');
-  const lateSection  = document.getElementById('mgr-late-orders-section');
-  const lateList     = document.getElementById('mgr-late-orders-list');
-  const normalOrders = allOrders.filter(o => !o.is_late);
-  const lateOrders   = allOrders.filter(o => o.is_late);
+  const normalOrders = allOrders.filter(o => orderLateRound(o) === 0);
 
   // ── Normal orders ──
   if (!normalOrders.length) {
@@ -1308,17 +1342,56 @@ function renderMgrOrders() {
     }
   }
 
-  // ── Late orders ──
-  if (!lateOrders.length) {
-    lateSection.style.display = 'none';
-  } else {
-    lateSection.style.display = 'block';
-    lateList.innerHTML = lateOrders.map(o => `
-      <div class="mgr-order-item mgr-order-late">
-        <div><strong>${esc(o.colleague_name)}</strong><span style="color:var(--text-muted)"> — ${esc(o.order_text)}</span></div>
-        <button class="btn btn-danger btn-xs" data-action="delete-order" data-id="${o.id}">&times;</button>
-      </div>`).join('');
+  renderLateRounds();
+}
+
+function renderMgrAsportoOrders() {
+  const list = document.getElementById('mgr-asporto-list');
+  if (!asportoOrders.length) {
+    list.innerHTML = '<p class="empty">Nessun ordine asporto.</p>';
+    return;
   }
+  // Group by place
+  const byPlace = {};
+  asportoOrders.forEach(o => {
+    const key = o.place_id || 0;
+    if (!byPlace[key]) byPlace[key] = { name: o.place_name || places.find(p => p.id === o.place_id)?.name || 'Vario', orders: [] };
+    byPlace[key].orders.push(o);
+  });
+  let html = '';
+  Object.values(byPlace).forEach(({ name, orders }) => {
+    html += `<div class="mgr-orders-place-header">${esc(name)}</div>`;
+    html += orders.map(o => `
+      <div class="mgr-order-item">
+        <div><strong>${esc(o.colleague_name)}</strong><span style="color:var(--text-muted)"> — ${esc(o.order_text)}</span></div>
+        <button class="btn btn-danger btn-xs" data-action="delete-asporto-mgr" data-id="${o.id}">&times;</button>
+      </div>`).join('');
+  });
+  list.innerHTML = html;
+}
+
+function mgrGenerateAsportoWA() {
+  if (!asportoOrders.length) { showToast('Nessun ordine asporto da aggregare.'); return; }
+  const nameInput = document.getElementById('mgr-ordination-name');
+  const name = nameInput?.value.trim() || localStorage.getItem('waOrderName_' + userGroupId) || userGroupName;
+  // Group by place and build one block per restaurant
+  const byPlace = {};
+  asportoOrders.forEach(o => {
+    const key = o.place_id || 0;
+    const pName = o.place_name || places.find(p => p.id === o.place_id)?.name || 'Vario';
+    if (!byPlace[key]) byPlace[key] = { name: pName, orders: [] };
+    byPlace[key].orders.push(o);
+  });
+  const blocks = Object.values(byPlace).map(({ name: pName, orders }) => {
+    const counts = {};
+    orders.forEach(o => { const k = o.order_text.trim().toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+    let msg = `[${pName}]\nCiao,\n\n`;
+    Object.entries(counts).forEach(([text, count]) => { msg += count > 1 ? `• ${count}x ${text}\n` : `• ${text}\n`; });
+    msg += `\nGrazie, ${name} x ${orders.length}`;
+    return msg.trim();
+  });
+  document.getElementById('mgr-wa-asporto-text').value = blocks.join('\n\n---\n\n');
+  document.getElementById('mgr-wa-asporto-block').style.display = 'block';
 }
 
 function renderMgrJoinRequests() {
@@ -1415,6 +1488,9 @@ async function mgrClearOrders() {
 async function mgrDeleteOrder(id) {
   await apiFetch(gp(`/orders/${today}/${id}`), 'DELETE', { manager_name: collegeName });
 }
+async function mgrDeleteAsportoOrder(id) {
+  await apiFetch(gp(`/asporto/${today}/${id}`), 'DELETE', { manager_name: collegeName });
+}
 async function mgrAddMember() {
   const input = document.getElementById('mgr-add-member-input');
   const name  = input.value.trim();
@@ -1452,11 +1528,10 @@ async function mgrRejectJoin(rid) {
 }
 async function mgrConfirmAndGenerateWA() {
   // If not yet locked, lock first
-  if (!sessionState.orders_locked) {
+  if (sessionLockCount() === 0) {
     const res = await apiFetch(gp(`/session/${today}/lock-orders`), 'PUT', { manager_name: collegeName });
     if (!res) return;
-    // sessionState will be updated via WS session_updated, but update locally too
-    sessionState = { ...sessionState, orders_locked: true };
+    sessionState = { ...sessionState, orders_lock_count: 1 };
     renderMgrLockState();
   }
   mgrGenerateWA();
@@ -1465,23 +1540,24 @@ async function mgrConfirmAndGenerateWA() {
 async function mgrUnlockOrders() {
   const res = await apiFetch(gp(`/session/${today}/unlock-orders`), 'PUT', { manager_name: collegeName });
   if (!res) return;
-  sessionState = { ...sessionState, orders_locked: false };
+  sessionState = { ...sessionState, orders_lock_count: Math.max(0, sessionLockCount() - 1) };
   renderMgrLockState();
+  renderLateRounds();
   showToast('Ordini sbloccati.');
 }
 
 function renderMgrLockState() {
   const banner  = document.getElementById('mgr-orders-locked-banner');
   const waBtn   = document.getElementById('btn-mgr-wa');
-  const locked  = !!sessionState.orders_locked;
+  const locked  = sessionLockCount() > 0;
   banner.style.display = locked ? 'flex' : 'none';
-  if (waBtn) waBtn.textContent = locked ? '📲 Rigenera WhatsApp' : '🔒 Conferma & WhatsApp';
+  if (waBtn) waBtn.textContent = sessionLockCount() > 0 ? '📲 Rigenera WhatsApp' : '🔒 Conferma & WhatsApp';
 }
 
 function mgrGenerateWA() {
-  const normalOrders = allOrders.filter(o => !o.is_late);
+  const normalOrders = allOrders.filter(o => orderLateRound(o) === 0);
   if (!normalOrders.length) { showToast('Nessun ordine da aggregare.'); return; }
-  const nameInput = document.getElementById('mgr-ordination-name');
+  const nameInput = document.getElementById('location-name');
   if (nameInput) {
     const savedName = localStorage.getItem('waOrderName_' + userGroupId);
     if (!nameInput.value.trim()) nameInput.value = savedName || userGroupName;
@@ -1506,24 +1582,83 @@ function mgrGenerateWA() {
   document.getElementById('mgr-wa-block').style.display = 'block';
 }
 
-function mgrGenerateLateWA() {
-  const lateOrders = allOrders.filter(o => o.is_late);
-  if (!lateOrders.length) { showToast('Nessun ordine in ritardo da aggregare.'); return; }
+function renderLateRounds() {
+  const container = document.getElementById('mgr-late-rounds-container');
+  if (!container) return;
+  const lockCount  = sessionLockCount();
+  // Collect all unique late rounds present in orders
+  const rounds = [...new Set(allOrders.map(orderLateRound).filter(r => r > 0))].sort((a, b) => a - b);
+  if (!rounds.length) { container.innerHTML = ''; return; }
+  const multiRound = rounds.length > 1 || lockCount > 1;
+  container.innerHTML = rounds.map(round => {
+    const roundOrders = allOrders.filter(o => orderLateRound(o) === round);
+    const isActive    = round === lockCount;  // still receiving orders
+    const isClosed    = round < lockCount;    // already confirmed
+    const waText      = lateRoundWATexts[round] || '';
+    const title       = multiRound ? `⏰ Ritardatari — Turno ${round}` : '⏰ Ordini in ritardo';
+    return `
+      <div class="mgr-late-round-section">
+        <div class="manager-card-head" style="margin-bottom:8px">
+          <h3 class="mgr-late-title">${title}</h3>
+          <div class="row gap-sm">
+            ${isActive && roundOrders.length ? `<button class="btn btn-whatsapp btn-sm" data-action="confirm-late-round" data-round="${round}">🔒 Conferma & WhatsApp</button>` : ''}
+            ${isClosed ? `<button class="btn btn-secondary btn-sm" data-action="regen-late-wa" data-round="${round}">↻ Rigenera</button>` : ''}
+          </div>
+        </div>
+        <div>
+          ${roundOrders.map(o => `
+            <div class="mgr-order-item mgr-order-late">
+              <div><strong>${esc(o.colleague_name)}</strong><span style="color:var(--text-muted)"> — ${esc(o.order_text)}</span></div>
+              <button class="btn btn-danger btn-xs" data-action="delete-late-order" data-id="${o.id}">&times;</button>
+            </div>`).join('') || '<p class="empty">Nessun ordine ancora.</p>'}
+        </div>
+        ${waText ? `
+        <div style="margin-top:14px">
+          <textarea class="mgr-wa-textarea" rows="6" readonly>${esc(waText)}</textarea>
+          <div class="row gap-sm" style="justify-content:flex-end; margin-top:8px">
+            <button class="btn btn-secondary btn-sm" data-action="copy-late-msg" data-round="${round}">📋 Copia</button>
+            <button class="btn btn-whatsapp btn-sm" data-action="send-late-wa" data-round="${round}">📲 Apri WhatsApp</button>
+          </div>
+        </div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+async function mgrConfirmLateRound(round) {
+  // Lock only if this is the currently active round
+  if (round === sessionLockCount()) {
+    const res = await apiFetch(gp(`/session/${today}/lock-orders`), 'PUT', { manager_name: collegeName });
+    if (!res) return;
+    sessionState = { ...sessionState, orders_lock_count: sessionLockCount() + 1 };
+    renderMgrLockState();
+  }
+  const roundOrders = allOrders.filter(o => orderLateRound(o) === round);
+  lateRoundWATexts[round] = buildLateRoundWA(roundOrders);
+  renderLateRounds();
+}
+
+function mgrRegenLateWA(round) {
+  const roundOrders = allOrders.filter(o => orderLateRound(o) === round);
+  if (!roundOrders.length) { showToast('Nessun ordine in questo turno.'); return; }
+  lateRoundWATexts[round] = buildLateRoundWA(roundOrders);
+  renderLateRounds();
+}
+
+function buildLateRoundWA(orders) {
+  if (!orders.length) return '';
   const isSplit = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length > 1;
   const blocks  = [];
   if (isSplit) {
     sessionState.winning_place_ids.forEach(pid => {
-      const placeOrders = lateOrders.filter(o => o.place_id === pid);
+      const placeOrders = orders.filter(o => o.place_id === pid);
       if (!placeOrders.length) return;
       const placeName = places.find(p => p.id === pid)?.name || `#${pid}`;
       blocks.push(`[${placeName}]\n` + buildWAMessage(placeOrders, 'Aggiungo'));
     });
   } else {
-    blocks.push(buildWAMessage(lateOrders, 'Aggiungo'));
+    blocks.push(buildWAMessage(orders, 'Aggiungo'));
   }
-  const text = blocks.join('\n\n---\n\n');
-  document.getElementById('mgr-wa-late-text').value = text;
-  document.getElementById('mgr-wa-late-block').style.display = 'block';
+  return blocks.join('\n\n---\n\n');
 }
 
 function buildWAMessage(orders, greeting = 'Ciao') {
