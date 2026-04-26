@@ -160,6 +160,15 @@ npm start
 4. Type your order → press **Invia Ordine**
 5. Done — the admin will see your order immediately
 
+### Restaurant owner steps
+1. The admin creates a restaurant account in **Admin UI → 🍽️ Ristoratori** tab (link it to a Place)
+2. The restaurant owner opens the **Client UI** → logs in with their account
+3. They see their own dashboard with three tabs:
+   - **📦 Ordini** — live list of all orders grouped by team ("table")
+   - **📊 Riepilogo** — aggregated dish counts (how many of each dish to prepare)
+   - **📋 Menu** — daily menu editor for their restaurant
+4. The dashboard updates live via WebSocket whenever new orders arrive
+
 ---
 
 ## Architecture Notes

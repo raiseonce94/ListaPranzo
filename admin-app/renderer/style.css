@@ -723,9 +723,10 @@ textarea { width:100%; resize:vertical }
   font-size: 0.72rem; padding: 2px 7px; border-radius: 12px;
   font-weight: 600; white-space: nowrap;
 }
-.role-manager { background: #fef3c7; color: #92400e }
-.role-user    { background: #e0f2fe; color: #0369a1 }
-.role-admin   { background: #fce7f3; color: #be185d }
+.role-manager    { background: #fef3c7; color: #92400e }
+.role-user       { background: #e0f2fe; color: #0369a1 }
+.role-admin      { background: #fce7f3; color: #be185d }
+.role-restaurant { background: #ecfdf5; color: #059669 }
 .btn-xs {
   font-size: 0.73rem; padding: 3px 8px;
   border-radius: 5px; cursor: pointer; white-space: nowrap;

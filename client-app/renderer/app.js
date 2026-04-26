@@ -7,9 +7,11 @@ const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${wind
 let ws               = null;
 let wsReconnectTimer = null;
 let collegeName      = localStorage.getItem('collegeName') || '';
-let userRole         = localStorage.getItem('userRole')   || 'user';  // 'admin'|'manager'|'user'
+let userRole         = localStorage.getItem('userRole')   || 'user';  // 'admin'|'manager'|'user'|'restaurant'
 let userGroupId      = parseInt(localStorage.getItem('userGroupId'), 10) || null;
 let userGroupName    = localStorage.getItem('userGroupName') || '';
+let userPlaceId      = parseInt(localStorage.getItem('userPlaceId'), 10) || null;
+let userPlaceName    = localStorage.getItem('userPlaceName') || '';
 
 let places           = [];
 let menus            = [];
@@ -33,6 +35,7 @@ let mgrMembers        = [];
 let mgrPendingCount   = 0;
 let availableGroups   = [];
 let lateRoundWATexts  = {};
+let restaurantToken   = null;
 
 const today = new Date().toISOString().split('T')[0];
 
@@ -105,6 +108,11 @@ function showScreen(name) {
     document.getElementById('hdr-group-manager').textContent = userGroupName;
     renderManagerScreen();
   }
+  if (name === 'restaurant') {
+    document.getElementById('hdr-restaurant-name').textContent = collegeName;
+    document.getElementById('hdr-place-name').textContent = userPlaceName;
+    renderRestaurantScreen();
+  }
 }
 function updateMgrNotification() {
   document.querySelectorAll('.btn-manager').forEach(btn => {
@@ -144,6 +152,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // User controls
   document.getElementById('btn-change-name').addEventListener('click', changeName);
   document.getElementById('btn-change-name-setup').addEventListener('click', changeName);
+  document.getElementById('btn-change-name-order').addEventListener('click', changeName);
+  document.getElementById('btn-change-name-confirm').addEventListener('click', changeName);
   document.getElementById('btn-change-password').addEventListener('click', changePassword);
 
   // Voting
@@ -301,6 +311,26 @@ document.addEventListener('DOMContentLoaded', () => {
     if (btn.dataset.action === 'demote-member')  mgrSetMemberRole(name, 'user');
   });
 
+  // Restaurant dashboard
+  document.getElementById('btn-restaurant-logout').addEventListener('click', changeName);
+  document.getElementById('btn-restaurant-refresh').addEventListener('click', refreshRestaurantOrders);
+  document.getElementById('restaurant-date').addEventListener('change', refreshRestaurantOrders);
+  document.getElementById('btn-restaurant-save-menu').addEventListener('click', saveRestaurantMenu);
+  document.getElementById('btn-restaurant-load-menu').addEventListener('click', loadRestaurantMenu);
+  document.getElementById('restaurant-menu-date').addEventListener('change', loadRestaurantMenu);
+  // Restaurant sub-tabs
+  document.querySelectorAll('.rtab-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.rtab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.rtab').forEach(s => s.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById(`rtab-${btn.dataset.rtab}`).classList.add('active');
+      if (btn.dataset.rtab === 'orders')  renderRestaurantOrders();
+      if (btn.dataset.rtab === 'summary') renderRestaurantSummary();
+      if (btn.dataset.rtab === 'asporto') renderRestaurantAsportoTab();
+    });
+  });
+
   if (collegeName) startApp();
 });
 
@@ -351,6 +381,10 @@ async function signIn() {
     return;
   }
   setUserSession(data);
+  if (data.role === 'restaurant' && data.token) {
+    restaurantToken = data.token;
+    sessionStorage.setItem('restaurantToken', data.token);
+  }
   startApp();
 }
 
@@ -386,6 +420,8 @@ function setUserSession(info) {
   userRole      = info.role   || 'user';
   userGroupId   = info.group_id   || null;
   userGroupName = info.group_name || '';
+  userPlaceId   = info.place_id   || null;
+  userPlaceName = info.place_name || '';
   saveUserSession();
 }
 
@@ -394,13 +430,17 @@ function saveUserSession() {
   localStorage.setItem('userRole',      userRole);
   localStorage.setItem('userGroupId',   userGroupId ?? '');
   localStorage.setItem('userGroupName', userGroupName);
+  localStorage.setItem('userPlaceId',   userPlaceId ?? '');
+  localStorage.setItem('userPlaceName', userPlaceName);
 }
 
 function loginBack() { showSignInForm(); }
 
 function changeName() {
-  ['collegeName','userRole','userGroupId','userGroupName'].forEach(k => localStorage.removeItem(k));
+  ['collegeName','userRole','userGroupId','userGroupName','userPlaceId','userPlaceName'].forEach(k => localStorage.removeItem(k));
+  sessionStorage.removeItem('restaurantToken');
   collegeName = ''; userRole = 'user'; userGroupId = null; userGroupName = '';
+  userPlaceId = null; userPlaceName = ''; restaurantToken = null;
   hasVoted = false; hasOrdered = false; selectedPlaceIds = new Set(); allVotes = [];
   document.getElementById('login-name').value     = '';
   document.getElementById('login-password').value = '';
@@ -422,6 +462,7 @@ async function changePassword() {
 
 // ═══ APP START ════════════════════════════════════════════
 async function startApp() {
+  if (userRole === 'restaurant') { startRestaurantApp(); return; }
   if (collegeName) {
     const check = await apiFetch(`/users/exists/${encodeURIComponent(collegeName)}`).catch(() => null);
     if (!check || !check.exists) { changeName(); return; }
@@ -598,7 +639,7 @@ function connectWebSocket() {
 
 function setDots(connected) {
   const cls = connected ? 'dot dot-on' : 'dot dot-off';
-  ['vote','order','confirm','asporto','manager'].forEach(s => {
+  ['vote','order','confirm','asporto','manager','restaurant'].forEach(s => {
     const el = document.getElementById(`ws-dot-${s}`);
     if (el) el.className = cls;
   });
@@ -610,6 +651,13 @@ async function handleWSMessage(data) {
       loadPlaces().then(() => { if (sessionState.state === 'voting') renderVotingScreen(); });
       break;
     case 'menus_updated':
+      if (userRole === 'restaurant') {
+        // Only reload menu tab if it's visible and for their place
+        const menuTab = document.getElementById('rtab-menu');
+        if (menuTab && menuTab.classList.contains('active') && data.place_id !== userPlaceId)
+          loadRestaurantMenu();
+        break;
+      }
       if (data.date === today)
         loadMenus().then(() => { if (sessionState.state === 'voting') renderVotingScreen(); });
       break;
@@ -645,6 +693,7 @@ async function handleWSMessage(data) {
       }
       break;
     case 'orders_updated':
+      if (userRole === 'restaurant') { refreshRestaurantOrders(); break; }
       if (data.date === today && data.group_id === userGroupId) {
         allOrders = data.orders || [];
         if (hasOrdered) renderConfirmationOrders();
@@ -653,6 +702,7 @@ async function handleWSMessage(data) {
       }
       break;
     case 'asporto_updated':
+      if (userRole === 'restaurant') { refreshRestaurantOrders(); break; }
       if (data.date === today && data.group_id === userGroupId) {
         asportoOrders    = data.orders || [];
         myAsportoOrders  = asportoOrders.filter(o => o.colleague_name === collegeName);
@@ -1684,3 +1734,168 @@ function mgrOpenWA() {
 }
 
 
+// ═══ RESTAURANT ════════════════════════════════════════════
+
+// State for restaurant dashboard
+let restaurantOrders  = [];   // [{group_id, group_name, orders:[...]}]
+let restaurantAsporto = [];   // flat list
+
+// Fetch with JWT Bearer token (used by restaurant for requireRestaurant endpoints)
+async function restaurantApiFetch(path, method = 'GET', body = null) {
+  const token = restaurantToken || sessionStorage.getItem('restaurantToken');
+  try {
+    const opts = { method, headers: { 'Authorization': `Bearer ${token}` } };
+    if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+    const res = await fetch(`${API}${path}`, opts);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      showToast(`Errore: ${err.error || res.statusText}`);
+      return null;
+    }
+    return res.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+async function startRestaurantApp() {
+  // Restore token from sessionStorage if available
+  restaurantToken = sessionStorage.getItem('restaurantToken') || null;
+  // Set today's date in both date pickers
+  document.getElementById('restaurant-date').value = today;
+  document.getElementById('restaurant-menu-date').value = today;
+  // Show restaurant screen
+  showScreen('restaurant');
+  connectWebSocket();
+  await refreshRestaurantOrders();
+  await loadRestaurantMenu();
+}
+
+async function refreshRestaurantOrders() {
+  const date = document.getElementById('restaurant-date').value || today;
+  const [tables, asporto] = await Promise.all([
+    restaurantApiFetch(`/restaurant/orders/${date}`),
+    restaurantApiFetch(`/restaurant/asporto/${date}`)
+  ]);
+  restaurantOrders  = tables  || [];
+  restaurantAsporto = asporto || [];
+  renderRestaurantScreen();
+}
+
+function renderRestaurantScreen() {
+  const activeRtab = document.querySelector('.rtab-btn.active')?.dataset?.rtab || 'orders';
+  if (activeRtab === 'orders')  renderRestaurantOrders();
+  if (activeRtab === 'summary') renderRestaurantSummary();
+  if (activeRtab === 'asporto') renderRestaurantAsportoTab();
+}
+
+function renderRestaurantOrders() {
+  const container = document.getElementById('restaurant-tables-list');
+  if (!restaurantOrders.length) {
+    container.innerHTML = '<p class="empty">Nessun ordine per questa data.</p>';
+    return;
+  }
+  container.innerHTML = restaurantOrders.map(table => {
+    const orderRows = table.orders.map(o => `
+      <div class="restaurant-order-row${o.is_late ? ' restaurant-order-late' : ''}">
+        <span class="restaurant-order-name">${esc(o.colleague_name)}</span>
+        <span class="restaurant-order-text">${esc(o.order_text)}</span>
+        ${o.is_late ? `<span class="restaurant-late-badge">+${o.late_round}</span>` : ''}
+        ${fmtTime(o.created_at)}
+      </div>`).join('');
+    return `
+      <div class="restaurant-table-card">
+        <div class="restaurant-table-head">
+          <span class="restaurant-table-icon">🪑</span>
+          <strong class="restaurant-table-name">${esc(table.group_name)}</strong>
+          <span class="restaurant-table-count">&times;${table.orders.length}</span>
+        </div>
+        <div class="restaurant-table-orders">${orderRows}</div>
+      </div>`;
+  }).join('');
+}
+
+function renderRestaurantSummary() {
+  const dateLabel = document.getElementById('restaurant-summary-date');
+  const date = document.getElementById('restaurant-date').value || today;
+  dateLabel.textContent = new Date(date + 'T12:00:00').toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  const dishContainer = document.getElementById('restaurant-dish-aggregate');
+  const allOrds = restaurantOrders.flatMap(t => t.orders);
+  if (!allOrds.length) {
+    dishContainer.innerHTML = '<p class="empty">Nessun ordine per questa data.</p>';
+  } else {
+    const counts = {};
+    allOrds.forEach(o => {
+      const parts = o.order_text.split(',').map(s => s.trim()).filter(Boolean);
+      parts.forEach(p => { const k = p.toLowerCase(); counts[k] = (counts[k] || 0) + 1; });
+    });
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    dishContainer.innerHTML = `
+      <div class="restaurant-aggregate-total">
+        Totale ordini: <strong>${allOrds.length}</strong> da <strong>${restaurantOrders.length}</strong> ${restaurantOrders.length === 1 ? 'tavolo' : 'tavoli'}
+      </div>
+      <ul class="restaurant-dish-list">
+        ${sorted.map(([dish, count]) => `
+          <li class="restaurant-dish-row">
+            <span class="restaurant-dish-count">&times;${count}</span>
+            <span class="restaurant-dish-name">${esc(dish)}</span>
+          </li>`).join('')}
+      </ul>`;
+  }
+
+  const asportoContainer = document.getElementById('restaurant-asporto-aggregate');
+  if (!restaurantAsporto.length) {
+    asportoContainer.innerHTML = '<p class="empty" style="font-size:0.85rem">Nessun asporto.</p>';
+  } else {
+    const aCounts = {};
+    restaurantAsporto.forEach(o => {
+      const parts = o.order_text.split(',').map(s => s.trim()).filter(Boolean);
+      parts.forEach(p => { const k = p.toLowerCase(); aCounts[k] = (aCounts[k] || 0) + 1; });
+    });
+    const aSorted = Object.entries(aCounts).sort((a, b) => b[1] - a[1]);
+    asportoContainer.innerHTML = `
+      <div class="restaurant-aggregate-total" style="font-size:0.85rem">
+        Totale asporto: <strong>${restaurantAsporto.length}</strong>
+      </div>
+      <ul class="restaurant-dish-list">
+        ${aSorted.map(([dish, count]) => `
+          <li class="restaurant-dish-row">
+            <span class="restaurant-dish-count">&times;${count}</span>
+            <span class="restaurant-dish-name">${esc(dish)}</span>
+          </li>`).join('')}
+      </ul>`;
+  }
+}
+
+function renderRestaurantAsportoTab() {
+  const container = document.getElementById('restaurant-asporto-list');
+  if (!restaurantAsporto.length) {
+    container.innerHTML = '<p class="empty">Nessun ordine asporto per questa data.</p>';
+    return;
+  }
+  container.innerHTML = restaurantAsporto.map(o => `
+    <div class="restaurant-asporto-row">
+      <div class="restaurant-asporto-info">
+        <strong>${esc(o.colleague_name)}</strong>
+        ${o.location ? `<span class="restaurant-asporto-location">📍 ${esc(o.location)}</span>` : ''}
+      </div>
+      <span class="restaurant-asporto-text">${esc(o.order_text)}</span>
+      ${fmtTime(o.created_at)}
+    </div>`).join('');
+}
+
+async function loadRestaurantMenu() {
+  const date = document.getElementById('restaurant-menu-date').value || today;
+  const menu = await restaurantApiFetch(`/restaurant/menus/${date}`);
+  if (menu !== null) {
+    document.getElementById('restaurant-menu-text').value = menu.menu_text || '';
+  }
+}
+
+async function saveRestaurantMenu() {
+  const date      = document.getElementById('restaurant-menu-date').value || today;
+  const menu_text = document.getElementById('restaurant-menu-text').value;
+  const res = await restaurantApiFetch('/restaurant/menus', 'POST', { date, menu_text });
+  if (res) showToast('✅ Menu salvato!');
+}

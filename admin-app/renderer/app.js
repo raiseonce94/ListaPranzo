@@ -82,6 +82,14 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('group-requests-list').addEventListener('click', onGroupsTabClick);
   document.getElementById('admin-groups-list').addEventListener('click',   onGroupsTabClick);
 
+  // Restaurant accounts tab
+  document.getElementById('btn-create-restaurant-acc').addEventListener('click', createRestaurantAccount);
+  document.getElementById('btn-reload-restaurants').addEventListener('click', () => { loadRestaurantAccounts().then(renderRestaurantAccounts); });
+  document.getElementById('restaurant-accounts-list').addEventListener('click', onRestaurantAccountsClick);
+  document.getElementById('reset-restaurant-pw-cancel').addEventListener('click', closeResetRestaurantPwModal);
+  document.getElementById('reset-restaurant-pw-confirm').addEventListener('click', confirmResetRestaurantPassword);
+  document.getElementById('reset-restaurant-pw-input').addEventListener('keydown', e => { if (e.key === 'Enter') confirmResetRestaurantPassword(); });
+
   // Bootstrap
   Promise.all([loadAdminGroups(), loadAdminUsers()]).then(() => loadAuditLog());
   Promise.all([loadPlaces(), loadGroupRequests()]);
@@ -123,10 +131,11 @@ function switchTab(tab) {
   document.querySelectorAll('.tab').forEach(s =>
     s.classList.toggle('active', s.id === `tab-${tab}`)
   );
-  if (tab === 'menus')  loadMenus();
-  if (tab === 'users')  loadUsers();
-  if (tab === 'audit')  loadAuditLog();
-  if (tab === 'groups') loadAdminGroupsTab();
+  if (tab === 'menus')       loadMenus();
+  if (tab === 'users')       loadUsers();
+  if (tab === 'audit')       loadAuditLog();
+  if (tab === 'groups')      loadAdminGroupsTab();
+  if (tab === 'restaurants') loadRestaurantAccountsTab();
 }
 
 // ── WebSocket ─────────────────────────────────────────────
@@ -930,4 +939,99 @@ async function clearAuditLog() {
   const params = date ? `?date=${encodeURIComponent(date)}` : '';
   const res = await apiFetch(`/audit${params}`, 'DELETE');
   if (res) { currentAuditLog = []; renderAuditLog(); showToast('Log audit cancellato.'); }
+}
+
+// ── Restaurant Accounts ───────────────────────────────────
+
+let restaurantAccounts = [];
+let resetRestaurantTarget = null;
+
+async function loadRestaurantAccountsTab() {
+  await Promise.all([loadPlaces(), loadRestaurantAccounts()]);
+  // Populate place dropdown
+  const sel = document.getElementById('restaurant-acc-place');
+  if (sel) {
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Scegli ristorante —</option>' +
+      places.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join('');
+    if (prev) sel.value = prev;
+  }
+  renderRestaurantAccounts();
+}
+
+async function loadRestaurantAccounts() {
+  const data = await apiFetch('/admin/restaurant-accounts');
+  if (data) restaurantAccounts = data;
+}
+
+function renderRestaurantAccounts() {
+  const list = document.getElementById('restaurant-accounts-list');
+  if (!restaurantAccounts.length) {
+    list.innerHTML = '<p class="empty">Nessun account ristoratore creato.</p>';
+    return;
+  }
+  list.innerHTML = restaurantAccounts.map(a => `
+    <div class="user-item">
+      <div class="user-info">
+        <strong>${esc(a.name)}</strong>
+        <span class="role-badge role-restaurant">🍽️ ristoratore</span>
+        ${a.place_name ? `<span style="font-size:0.82rem;color:#6b7280">→ ${esc(a.place_name)}</span>` : '<span style="font-size:0.82rem;color:#dc2626">⚠️ ristorante non trovato</span>'}
+      </div>
+      <div class="user-actions">
+        <button class="btn btn-secondary btn-sm" data-action="reset-restaurant-pw" data-name="${esc(a.name)}">🔑 Password</button>
+        <button class="btn btn-danger btn-sm" data-action="delete-restaurant-acc" data-name="${esc(a.name)}">🗑️ Elimina</button>
+      </div>
+    </div>`).join('');
+}
+
+async function createRestaurantAccount() {
+  const name     = document.getElementById('restaurant-acc-name').value.trim();
+  const password = document.getElementById('restaurant-acc-password').value;
+  const placeId  = parseInt(document.getElementById('restaurant-acc-place').value, 10);
+  if (!name)     { showToast('Inserisci un nome account.'); return; }
+  if (!password) { showToast('Inserisci una password.'); return; }
+  if (!placeId)  { showToast('Scegli un ristorante.'); return; }
+  const res = await apiFetch('/admin/restaurant-accounts', 'POST', { name, password, place_id: placeId });
+  if (res) {
+    document.getElementById('restaurant-acc-name').value     = '';
+    document.getElementById('restaurant-acc-password').value = '';
+    document.getElementById('restaurant-acc-place').value    = '';
+    showToast(`✅ Account "${name}" creato!`);
+    await loadRestaurantAccounts();
+    renderRestaurantAccounts();
+  }
+}
+
+function onRestaurantAccountsClick(e) {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const name = btn.dataset.name || '';
+  if (btn.dataset.action === 'delete-restaurant-acc')   deleteRestaurantAccount(name);
+  if (btn.dataset.action === 'reset-restaurant-pw')     openResetRestaurantPwModal(name);
+}
+
+async function deleteRestaurantAccount(name) {
+  if (!confirm(`Eliminare l'account ristoratore "${name}"?`)) return;
+  const res = await apiFetch(`/admin/restaurant-accounts/${encodeURIComponent(name)}`, 'DELETE');
+  if (res) { showToast(`Account "${name}" eliminato.`); await loadRestaurantAccounts(); renderRestaurantAccounts(); }
+}
+
+function openResetRestaurantPwModal(name) {
+  resetRestaurantTarget = name;
+  document.getElementById('reset-restaurant-pw-username').textContent = name;
+  document.getElementById('reset-restaurant-pw-input').value = '';
+  document.getElementById('reset-restaurant-pw-modal').style.display = 'flex';
+  setTimeout(() => document.getElementById('reset-restaurant-pw-input').focus(), 80);
+}
+
+function closeResetRestaurantPwModal() {
+  resetRestaurantTarget = null;
+  document.getElementById('reset-restaurant-pw-modal').style.display = 'none';
+}
+
+async function confirmResetRestaurantPassword() {
+  const pw = document.getElementById('reset-restaurant-pw-input').value;
+  if (!pw) { showToast('Inserisci una nuova password.'); return; }
+  const res = await apiFetch(`/admin/users/${encodeURIComponent(resetRestaurantTarget)}/reset-password`, 'POST', { new_password: pw });
+  if (res) { showToast('Password reimpostata.'); closeResetRestaurantPwModal(); }
 }

@@ -40,6 +40,7 @@
     <button class="tab-btn" data-tab="users">👤 Utenti</button>
     <button class="tab-btn" data-tab="audit">📋 Audit</button>
     <button class="tab-btn" data-tab="groups">👥 Gruppi <span id="group-requests-badge" class="tab-badge" style="display:none">0</span></button>
+    <button class="tab-btn" data-tab="restaurants">🍽️ Ristoratori</button>
   </nav>
 
   <main>
@@ -187,6 +188,47 @@
           <h2 style="margin:0">Gruppi Attivi</h2>
         </div>
         <div id="admin-groups-list"><p class="empty">Caricamento…</p></div>
+      </div>
+
+    </section>
+
+    <!-- ── TAB: Restaurant Accounts ── -->
+    <section id="tab-restaurants" class="tab">
+
+      <div class="card">
+        <h2>Crea Account Ristoratore</h2>
+        <p style="font-size:0.88rem;color:#6b7280;margin-bottom:12px">
+          Un account ristoratore permette al gestore di un ristorante di accedere alla propria dashboard (ordini del giorno, riepilogo piatti, editor menu) via l'app client.
+        </p>
+        <div class="row gap-sm" style="flex-wrap:wrap">
+          <input id="restaurant-acc-name" type="text" placeholder="Nome account (es. Pizzeria Mario)" style="flex:2;min-width:160px" />
+          <input id="restaurant-acc-password" type="password" placeholder="Password" style="flex:2;min-width:140px" />
+          <select id="restaurant-acc-place" style="flex:2;min-width:160px">
+            <option value="">— Scegli ristorante —</option>
+          </select>
+          <button id="btn-create-restaurant-acc" class="btn btn-primary">+ Crea</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="row space-between mb-md">
+          <h2 style="margin:0">Account Ristoratori</h2>
+          <button id="btn-reload-restaurants" class="btn btn-secondary btn-sm">↻ Aggiorna</button>
+        </div>
+        <div id="restaurant-accounts-list"><p class="empty">Nessun account ristoratore.</p></div>
+      </div>
+
+      <!-- Reset password modal (restaurant) -->
+      <div id="reset-restaurant-pw-modal" class="modal-backdrop" style="display:none">
+        <div class="modal-box">
+          <h3>Reimposta Password Ristoratore</h3>
+          <p id="reset-restaurant-pw-username" class="modal-subtitle"></p>
+          <input id="reset-restaurant-pw-input" type="password" placeholder="Nuova password…" autocomplete="new-password" />
+          <div class="row gap-sm" style="margin-top:12px;justify-content:flex-end">
+            <button id="reset-restaurant-pw-cancel" class="btn btn-secondary">Annulla</button>
+            <button id="reset-restaurant-pw-confirm" class="btn btn-warning">Reimposta</button>
+          </div>
+        </div>
       </div>
 
     </section>

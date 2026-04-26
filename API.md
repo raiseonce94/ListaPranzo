@@ -46,8 +46,11 @@ The token is valid for **30 days**. Store it in your app and include it on every
 | `admin` | Full system access. Manages users, groups, data. |
 | `manager` | Manages their group's session, orders and votes. |
 | `user` | Regular member — can vote, order, manage own preorders. |
+| `restaurant` | Restaurant owner. Sees orders for their restaurant, edits their menu. |
 
 > **Backward compatibility:** Manager endpoints also accept `manager_name` in the request body. JWT is recommended for new integrations.
+
+> **Restaurant accounts** are created by the admin and linked to a specific place (`place_id`). They log in via the same `/client` UI but are redirected to their own dashboard.
 
 ---
 
@@ -837,6 +840,72 @@ The manager can lock again (incrementing the count) to open additional late roun
 PUT /api/groups/:gid/session/:date/lock-orders     ← open late round
 PUT /api/groups/:gid/session/:date/unlock-orders   ← re-open normal ordering
 ```
+
+---
+
+## Restaurant Owner API
+
+Restaurant accounts are created by the admin and linked to a `place_id`. They authenticate with a JWT via `POST /api/users/login` (same endpoint as regular users). All `/api/restaurant/*` routes require `role: restaurant`.
+
+### `GET /api/restaurant/me`
+Returns the restaurant owner's account info and linked place.
+```json
+{ "name": "pizzeria_mario", "place": { "id": 1, "name": "Pizzeria Mario", ... } }
+```
+
+### `GET /api/restaurant/orders/:date`
+All orders placed for this restaurant on `:date`, grouped by ordering group ("table").
+```json
+[
+  {
+    "group_id": 2,
+    "group_name": "Marketing Team",
+    "orders": [
+      { "id": 42, "colleague_name": "alice", "order_text": "Pizza Margherita", "late_round": 0, "is_late": false, "created_at": "..." }
+    ]
+  }
+]
+```
+
+### `GET /api/restaurant/asporto/:date`
+Takeaway/delivery orders for this restaurant on `:date`.
+```json
+[{ "id": 7, "colleague_name": "bob", "order_text": "Lasagna", "location": "Sala B", "created_at": "..." }]
+```
+
+### `GET /api/restaurant/menus/:date`
+Returns the current menu text for this restaurant on `:date`.
+```json
+{ "place_id": 1, "date": "2026-04-28", "menu_text": "Primo: Pasta\nSecondo: Pollo" }
+```
+
+### `POST /api/restaurant/menus`
+Set or update the menu for this restaurant.
+```json
+{ "date": "2026-04-28", "menu_text": "Primo: Lasagna\nSecondo: Arrosto" }
+```
+Broadcasts `menus_updated` to all connected clients.
+
+---
+
+## Admin: Restaurant Account Management
+
+These endpoints require `role: admin` (Bearer token from `/api/admin/login`).
+
+### `GET /api/admin/restaurant-accounts`
+List all restaurant owner accounts.
+```json
+[{ "name": "pizzeria_mario", "place_id": 1, "place_name": "Pizzeria Mario" }]
+```
+
+### `POST /api/admin/restaurant-accounts`
+Create a new restaurant owner account linked to a place.
+```json
+{ "name": "pizzeria_mario", "password": "secret", "place_id": 1 }
+```
+
+### `DELETE /api/admin/restaurant-accounts/:name`
+Delete a restaurant owner account.
 
 ---
 
