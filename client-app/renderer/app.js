@@ -409,7 +409,7 @@ async function signIn() {
   setUserSession(data);
   if (data.role === 'restaurant' && data.token) {
     restaurantToken = data.token;
-    sessionStorage.setItem('restaurantToken', data.token);
+    localStorage.setItem('restaurantToken', data.token);
   }
   startApp();
 }
@@ -465,6 +465,7 @@ function loginBack() { showSignInForm(); }
 function changeName() {
   ['collegeName','userRole','userGroupId','userGroupName','userPlaceId','userPlaceName'].forEach(k => localStorage.removeItem(k));
   sessionStorage.removeItem('restaurantToken');
+  localStorage.removeItem('restaurantToken');
   collegeName = ''; userRole = 'user'; userGroupId = null; userGroupName = '';
   userPlaceId = null; userPlaceName = ''; restaurantToken = null;
   hasVoted = false; hasOrdered = false; selectedPlaceIds = new Set(); allVotes = [];
@@ -1641,6 +1642,18 @@ function renderMgrLockState() {
   const locked  = sessionLockCount() > 0;
   banner.style.display = locked ? 'flex' : 'none';
   if (waBtn) waBtn.textContent = sessionLockCount() > 0 ? '📲 Rigenera WhatsApp' : '🔒 Conferma & WhatsApp';
+
+  // Disable "Chiudi Sessione" when there is no winner or split
+  const closeBtn = document.getElementById('btn-mgr-close-session');
+  if (closeBtn && sessionState.state === 'ordering') {
+    const hasWinner = !!sessionState.winning_place_id;
+    const hasSplit  = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length >= 2;
+    const noWinner  = !hasWinner && !hasSplit;
+    closeBtn.disabled = noWinner;
+    closeBtn.title    = noWinner
+      ? 'Imposta un vincitore o seleziona uno split prima di chiudere la sessione'
+      : '';
+  }
 }
 
 function mgrGenerateWA() {
@@ -1785,11 +1798,24 @@ let restaurantCollapsed = new Set(); // group_ids that are collapsed
 
 // Fetch with JWT Bearer token (used by restaurant for requireRestaurant endpoints)
 async function restaurantApiFetch(path, method = 'GET', body = null) {
-  const token = restaurantToken || sessionStorage.getItem('restaurantToken');
+  const token = restaurantToken || localStorage.getItem('restaurantToken') || sessionStorage.getItem('restaurantToken');
+  if (!token) {
+    // Token lost (e.g. mobile browser restarted) — go back to login
+    changeName();
+    return null;
+  }
   try {
     const opts = { method, headers: { 'Authorization': `Bearer ${token}` } };
     if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
     const res = await fetch(`${API}${path}`, opts);
+    if (res.status === 401) {
+      // Token expired or invalid — force re-login
+      localStorage.removeItem('restaurantToken');
+      sessionStorage.removeItem('restaurantToken');
+      restaurantToken = null;
+      changeName();
+      return null;
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       showToast(`Errore: ${err.error || res.statusText}`);
@@ -1802,8 +1828,8 @@ async function restaurantApiFetch(path, method = 'GET', body = null) {
 }
 
 async function startRestaurantApp() {
-  // Restore token from sessionStorage if available
-  restaurantToken = sessionStorage.getItem('restaurantToken') || null;
+  // Restore token — localStorage survives tab close on mobile, sessionStorage is fallback
+  restaurantToken = localStorage.getItem('restaurantToken') || sessionStorage.getItem('restaurantToken') || null;
   // Set today's date in both date pickers
   document.getElementById('restaurant-date').value = today;
   document.getElementById('restaurant-menu-date').value = today;
@@ -1812,9 +1838,8 @@ async function startRestaurantApp() {
   connectWebSocket();
   await Promise.all([
     refreshRestaurantOrders(),
-    loadRestaurantMenu(),
+    loadRestaurantMenu(),    // also loads status internally
     loadRestaurantDishes(),
-    loadRestaurantStatus(),
   ]);
 }
 
