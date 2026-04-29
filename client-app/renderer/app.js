@@ -133,6 +133,9 @@ function showBackendError() {
 
 // ── Init ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Register service worker early (non-blocking)
+  initServiceWorker();
+
   document.getElementById('today-label').textContent =
     new Date().toLocaleDateString('it-IT', { weekday:'long', day:'numeric', month:'long' });
   setInterval(() => {
@@ -156,6 +159,26 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-change-name-order').addEventListener('click', changeName);
   document.getElementById('btn-change-name-confirm').addEventListener('click', changeName);
   document.getElementById('btn-change-password').addEventListener('click', changePassword);
+  document.getElementById('btn-push-toggle').addEventListener('click', async () => {
+    if (Notification.permission === 'denied') {
+      showToast('Le notifiche sono bloccate nel browser. Abilitale dalle impostazioni del sito.');
+      return;
+    }
+    const isOn = Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1';
+    if (isOn) {
+      await pushUnsubscribe();
+      showToast('🔕 Notifiche disattivate.');
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        await pushSubscribe();
+        showToast('🔔 Notifiche attivate!');
+      } else {
+        showToast('Permesso negato — le notifiche non verranno inviate.');
+        await updatePushButton();
+      }
+    }
+  });
 
   // Voting
   document.getElementById('btn-submit-vote').addEventListener('click', submitVote);
@@ -314,6 +337,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Restaurant dashboard
   document.getElementById('btn-restaurant-logout').addEventListener('click', changeName);
+  document.getElementById('btn-push-toggle-restaurant').addEventListener('click', async () => {
+    if (Notification.permission === 'denied') {
+      showToast('Le notifiche sono bloccate nel browser. Abilitale dalle impostazioni del sito.');
+      return;
+    }
+    const isOn = Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1';
+    if (isOn) {
+      await pushUnsubscribe();
+      showToast('🔕 Notifiche disattivate.');
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        await pushSubscribe();
+        showToast('🔔 Notifiche attivate — riceverai un avviso per ogni nuovo ordine!');
+      } else {
+        showToast('Permesso negato — le notifiche non verranno inviate.');
+        await updatePushButton();
+      }
+    }
+  });
   document.getElementById('btn-restaurant-refresh').addEventListener('click', refreshRestaurantOrders);
   document.getElementById('restaurant-date').addEventListener('change', refreshRestaurantOrders);
   document.getElementById('btn-restaurant-save-menu').addEventListener('click', saveRestaurantMenu);
@@ -463,7 +506,10 @@ function saveUserSession() {
 function loginBack() { showSignInForm(); }
 
 function changeName() {
+  // Unsubscribe from push before clearing session
+  pushUnsubscribe().catch(() => {});
   ['collegeName','userRole','userGroupId','userGroupName','userPlaceId','userPlaceName'].forEach(k => localStorage.removeItem(k));
+  localStorage.removeItem('pushEnabled');
   sessionStorage.removeItem('restaurantToken');
   localStorage.removeItem('restaurantToken');
   collegeName = ''; userRole = 'user'; userGroupId = null; userGroupName = '';
@@ -485,6 +531,94 @@ async function changePassword() {
   const res = await apiFetch('/users/change-password', 'POST',
     { name: collegeName, old_password: oldPw, new_password: newPw });
   if (res) showToast('✅ Password cambiata con successo!');
+}
+
+// ═══ PUSH NOTIFICATIONS ══════════════════════════════════
+let _swRegistration = null;
+
+/** Register the service worker once. Safe to call multiple times. */
+async function initServiceWorker() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    _swRegistration = await navigator.serviceWorker.register('/client/sw.js', { scope: '/client/' });
+  } catch (_) { /* not critical */ }
+}
+
+/** Convert VAPID public key (base64url) to Uint8Array. */
+function urlBase64ToUint8Array(base64String) {
+  const pad    = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const b64    = (base64String + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw    = atob(b64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+  return output;
+}
+
+/** Subscribe the current user to push and send the subscription to the server. */
+async function pushSubscribe() {
+  if (!_swRegistration) return;
+  try {
+    // Fetch VAPID public key from server
+    const { publicKey } = await apiFetch('/push/vapid-public-key').catch(() => ({}));
+    if (!publicKey) return;
+    const subscription = await _swRegistration.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey)
+    });
+    await apiFetch('/push/subscribe', 'POST', {
+      user_name:    collegeName,
+      group_id:     userGroupId,
+      subscription: subscription.toJSON()
+    });
+    localStorage.setItem('pushEnabled', '1');
+    updatePushButton();
+  } catch (err) {
+    // User denied or browser error — not fatal
+    console.warn('Push subscribe failed:', err);
+  }
+}
+
+/** Unsubscribe the current user from push. */
+async function pushUnsubscribe() {
+  if (!_swRegistration) return;
+  try {
+    const sub = await _swRegistration.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    await apiFetch('/push/unsubscribe', 'POST', { user_name: collegeName });
+  } catch (_) {}
+  localStorage.removeItem('pushEnabled');
+  updatePushButton();
+}
+
+/** Update the bell button label/title based on current permission & subscription state. */
+async function updatePushButton() {
+  const btns = [
+    document.getElementById('btn-push-toggle'),
+    document.getElementById('btn-push-toggle-restaurant'),
+  ].filter(Boolean);
+  if (!('PushManager' in window) || Notification.permission === 'denied') {
+    btns.forEach(b => { b.style.display = 'none'; });
+    return;
+  }
+  const isOn = Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1';
+  btns.forEach(b => {
+    b.style.display = 'inline-flex';
+    b.textContent = isOn ? '🔔' : '🔕';
+    b.title = isOn ? 'Notifiche attive — clicca per disattivare' : 'Attiva notifiche push';
+  });
+}
+
+/** Called once after successful login/app start. Asks for permission if never asked. */
+async function maybeRequestPushPermission() {
+  if (!('PushManager' in window)) return;
+  if (userRole === 'admin') return; // admin doesn't need push
+  // restaurant users need a place_id; regular users need a group
+  if (userRole !== 'restaurant' && !userGroupId) return;
+  await updatePushButton();
+  // If already granted and was previously enabled, re-subscribe silently
+  if (Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1') {
+    await pushSubscribe();
+  }
 }
 
 // ═══ APP START ════════════════════════════════════════════
@@ -518,6 +652,8 @@ async function startApp() {
     connectWebSocket();
     if (!autoSent) updateScreen();
     if (hasOrdered) renderConfirmationOrders();
+    // Ask for push permission (non-blocking, best-effort)
+    maybeRequestPushPermission();
   } catch (_) {
     showBackendError();
   }
@@ -1841,6 +1977,8 @@ async function startRestaurantApp() {
     loadRestaurantMenu(),    // also loads status internally
     loadRestaurantDishes(),
   ]);
+  // Ask for push permission (non-blocking) — restaurant needs this for order alerts
+  maybeRequestPushPermission();
 }
 
 async function refreshRestaurantOrders() {

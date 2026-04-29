@@ -96,6 +96,7 @@ module.exports = {
   groups:            new Store('groups'),
   group_requests:    new Store('group_requests'),
   join_requests:     new Store('join_requests'),
-  restaurant_dishes: new Store('restaurant_dishes'),  // per-place dish library
-  restaurant_status: new Store('restaurant_status'),  // per-place per-day status (closed/capacity)
+  restaurant_dishes:   new Store('restaurant_dishes'),   // per-place dish library
+  restaurant_status:   new Store('restaurant_status'),   // per-place per-day status (closed/capacity)
+  push_subscriptions:  new Store('push_subscriptions'),  // web push subscriptions per user
 };
