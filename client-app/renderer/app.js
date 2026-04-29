@@ -29,6 +29,7 @@ let allVotes         = [];
 let asportoOrders    = [];
 let myAsportoOrders  = [];
 let asportoPrevScreen = 'voting';
+let orderPrevScreen   = null;   // set to 'manager' when ordering is opened from manager screen
 let mgrTimerInterval  = null;
 let mgrJoinRequests   = [];
 let mgrMembers        = [];
@@ -318,6 +319,31 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-restaurant-save-menu').addEventListener('click', saveRestaurantMenu);
   document.getElementById('btn-restaurant-load-menu').addEventListener('click', loadRestaurantMenu);
   document.getElementById('restaurant-menu-date').addEventListener('change', loadRestaurantMenu);
+  document.getElementById('btn-restaurant-save-status').addEventListener('click', saveRestaurantStatus);
+  document.getElementById('btn-restaurant-add-dish').addEventListener('click', addRestaurantDish);
+  document.getElementById('restaurant-new-dish').addEventListener('keydown', e => { if (e.key === 'Enter') addRestaurantDish(); });
+  document.getElementById('btn-restaurant-clear-menu').addEventListener('click', () => {
+    document.getElementById('restaurant-menu-text').value = '';
+    document.getElementById('restaurant-menu-text').focus();
+  });
+  // Expand/collapse all
+  document.getElementById('btn-expand-all').addEventListener('click', () => {
+    restaurantCollapsed.clear();
+    renderRestaurantOrders();
+  });
+  document.getElementById('btn-collapse-all').addEventListener('click', () => {
+    restaurantOrders.forEach(t => restaurantCollapsed.add(t.group_id));
+    renderRestaurantOrders();
+  });
+  // Sort buttons
+  document.querySelectorAll('.restaurant-sort-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.restaurant-sort-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      restaurantSort = btn.dataset.sort;
+      renderRestaurantOrders();
+    });
+  });
   // Restaurant sub-tabs
   document.querySelectorAll('.rtab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -611,6 +637,10 @@ function updateScreen() {
   }
   if (sessionState.state === 'ordering') {
     if (hasOrdered) { updateCancelButtonVisibility(); showScreen('confirmation'); return; }
+    // If coming from manager, track it so submit can return there
+    if (document.getElementById('screen-manager').classList.contains('active')) {
+      orderPrevScreen = 'manager';
+    }
     showScreen('ordering');
     renderOrderingScreen();
     return;
@@ -1095,8 +1125,15 @@ async function submitOrder() {
     } else {
       setConfirmText(orderText);
     }
-    showScreen('confirmation');
-    renderConfirmationOrders();
+    if (orderPrevScreen === 'manager') {
+      orderPrevScreen = null;
+      showToast('✅ Ordine inviato!');
+      showScreen('manager');
+      await renderManagerScreen();
+    } else {
+      showScreen('confirmation');
+      renderConfirmationOrders();
+    }
   }
 }
 
@@ -1121,6 +1158,7 @@ async function cancelOrder() {
   const myOrder = allOrders.find(o => o.colleague_name === collegeName);
   if (myOrder?.id) await apiFetch(gp(`/orders/${today}/${myOrder.id}`), 'DELETE', { manager_name: collegeName });
   hasOrdered = false; currentOrderText = ''; selectedOrderPlaceId = null;
+  orderPrevScreen = null;
   renderOrderingScreen();
   showScreen('ordering');
 }
@@ -1236,6 +1274,7 @@ async function deleteMyAsportoOrder(id) {
 
 // ═══ MANAGER DASHBOARD ════════════════════════════════════
 function backFromManager() {
+  orderPrevScreen = null;
   updateScreen();
 }
 
@@ -1737,8 +1776,12 @@ function mgrOpenWA() {
 // ═══ RESTAURANT ════════════════════════════════════════════
 
 // State for restaurant dashboard
-let restaurantOrders  = [];   // [{group_id, group_name, orders:[...]}]
-let restaurantAsporto = [];   // flat list
+let restaurantOrders   = [];   // [{group_id, group_name, last_order_at, orders:[...]}]
+let restaurantAsporto  = [];   // flat list
+let restaurantDishes   = [];   // [{id, name}] — dish library for this place
+let restaurantStatus   = {};   // {closed, max_orders, notes}
+let restaurantSort     = 'newest';  // 'newest' | 'oldest' | 'alpha'
+let restaurantCollapsed = new Set(); // group_ids that are collapsed
 
 // Fetch with JWT Bearer token (used by restaurant for requireRestaurant endpoints)
 async function restaurantApiFetch(path, method = 'GET', body = null) {
@@ -1767,8 +1810,12 @@ async function startRestaurantApp() {
   // Show restaurant screen
   showScreen('restaurant');
   connectWebSocket();
-  await refreshRestaurantOrders();
-  await loadRestaurantMenu();
+  await Promise.all([
+    refreshRestaurantOrders(),
+    loadRestaurantMenu(),
+    loadRestaurantDishes(),
+    loadRestaurantStatus(),
+  ]);
 }
 
 async function refreshRestaurantOrders() {
@@ -1791,28 +1838,62 @@ function renderRestaurantScreen() {
 
 function renderRestaurantOrders() {
   const container = document.getElementById('restaurant-tables-list');
-  if (!restaurantOrders.length) {
+  const countEl   = document.getElementById('restaurant-orders-count');
+
+  // Sort
+  let tables = [...restaurantOrders];
+  if (restaurantSort === 'newest') tables.sort((a, b) => (b.last_order_at || '').localeCompare(a.last_order_at || ''));
+  else if (restaurantSort === 'oldest') tables.sort((a, b) => (a.first_order_at || '').localeCompare(b.first_order_at || ''));
+  else tables.sort((a, b) => a.group_name.localeCompare(b.group_name, 'it'));
+
+  // Only show groups that have at least one order
+  tables = tables.filter(t => t.orders.length > 0);
+
+  const totalOrders = tables.reduce((s, t) => s + t.orders.length, 0);
+  if (countEl) countEl.textContent = tables.length
+    ? `${tables.length} ${tables.length === 1 ? 'tavolo' : 'tavoli'} · ${totalOrders} ${totalOrders === 1 ? 'ordine' : 'ordini'}`
+    : '';
+
+  if (!tables.length) {
     container.innerHTML = '<p class="empty">Nessun ordine per questa data.</p>';
     return;
   }
-  container.innerHTML = restaurantOrders.map(table => {
-    const orderRows = table.orders.map(o => `
-      <div class="restaurant-order-row${o.is_late ? ' restaurant-order-late' : ''}">
-        <span class="restaurant-order-name">${esc(o.colleague_name)}</span>
-        <span class="restaurant-order-text">${esc(o.order_text)}</span>
-        ${o.is_late ? `<span class="restaurant-late-badge">+${o.late_round}</span>` : ''}
-        ${fmtTime(o.created_at)}
-      </div>`).join('');
+
+  container.innerHTML = tables.map(table => {
+    const collapsed = restaurantCollapsed.has(table.group_id);
+    const orderRows = table.orders.map(o => {
+      const timeStr = fmtTime(o.created_at);
+      return `
+        <div class="restaurant-order-row${o.is_late ? ' restaurant-order-late' : ''}">
+          <span class="restaurant-order-name">${esc(o.colleague_name)}</span>
+          <span class="restaurant-order-text">${esc(o.order_text)}</span>
+          ${o.is_late ? `<span class="restaurant-late-badge">+ritardo</span>` : ''}
+          ${timeStr}
+        </div>`;
+    }).join('');
+    const lastTime = table.last_order_at ? fmtTime(table.last_order_at) : '';
     return `
-      <div class="restaurant-table-card">
-        <div class="restaurant-table-head">
+      <div class="restaurant-table-card" data-group="${table.group_id}">
+        <div class="restaurant-table-head restaurant-table-toggle" data-group="${table.group_id}">
           <span class="restaurant-table-icon">🪑</span>
           <strong class="restaurant-table-name">${esc(table.group_name)}</strong>
           <span class="restaurant-table-count">&times;${table.orders.length}</span>
+          <span class="restaurant-table-time">${lastTime}</span>
+          <span class="restaurant-collapse-icon">${collapsed ? '▶' : '▼'}</span>
         </div>
-        <div class="restaurant-table-orders">${orderRows}</div>
+        <div class="restaurant-table-orders${collapsed ? ' hidden' : ''}">${orderRows}</div>
       </div>`;
   }).join('');
+
+  // Collapse/expand via event delegation
+  container.querySelectorAll('.restaurant-table-toggle').forEach(el => {
+    el.addEventListener('click', () => {
+      const gid = parseInt(el.dataset.group, 10);
+      if (restaurantCollapsed.has(gid)) restaurantCollapsed.delete(gid);
+      else restaurantCollapsed.add(gid);
+      renderRestaurantOrders();
+    });
+  });
 }
 
 function renderRestaurantSummary() {
@@ -1887,15 +1968,101 @@ function renderRestaurantAsportoTab() {
 
 async function loadRestaurantMenu() {
   const date = document.getElementById('restaurant-menu-date').value || today;
-  const menu = await restaurantApiFetch(`/restaurant/menus/${date}`);
+  const [menu, status] = await Promise.all([
+    restaurantApiFetch(`/restaurant/menus/${date}`),
+    restaurantApiFetch(`/restaurant/status/${date}`)
+  ]);
   if (menu !== null) {
     document.getElementById('restaurant-menu-text').value = menu.menu_text || '';
+    const maxEl = document.getElementById('restaurant-menu-maxdishes');
+    if (maxEl) maxEl.value = menu.max_dishes || 0;
+  }
+  if (status) {
+    restaurantStatus = status;
+    const closedEl = document.getElementById('restaurant-closed-toggle');
+    const maxOrdEl = document.getElementById('restaurant-max-orders');
+    if (closedEl) closedEl.checked = !!status.closed;
+    if (maxOrdEl) maxOrdEl.value  = status.max_orders || 0;
   }
 }
 
 async function saveRestaurantMenu() {
   const date      = document.getElementById('restaurant-menu-date').value || today;
   const menu_text = document.getElementById('restaurant-menu-text').value;
-  const res = await restaurantApiFetch('/restaurant/menus', 'POST', { date, menu_text });
-  if (res) showToast('✅ Menu salvato!');
+  const max_dishes = parseInt(document.getElementById('restaurant-menu-maxdishes')?.value, 10) || 0;
+  const res = await restaurantApiFetch('/restaurant/menus', 'POST', { date, menu_text, max_dishes });
+  if (res) {
+    showToast('✅ Menu salvato!');
+    // Refresh dish library — saving menu auto-adds new lines as dishes
+    await loadRestaurantDishes();
+  }
+}
+
+async function saveRestaurantStatus() {
+  const date      = document.getElementById('restaurant-menu-date').value || today;
+  const closed    = document.getElementById('restaurant-closed-toggle')?.checked || false;
+  const max_orders = parseInt(document.getElementById('restaurant-max-orders')?.value, 10) || 0;
+  const res = await restaurantApiFetch('/restaurant/status', 'POST', { date, closed, max_orders });
+  if (res) showToast(closed ? '🚫 Ristorante chiuso per questa data.' : '✅ Stato aggiornato.');
+}
+
+// ── Dish library ──────────────────────────────────────────────
+async function loadRestaurantDishes() {
+  const dishes = await restaurantApiFetch('/restaurant/dishes');
+  if (dishes) {
+    restaurantDishes = dishes;
+    renderDishChips();
+  }
+}
+
+function renderDishChips() {
+  const container = document.getElementById('restaurant-dish-chips');
+  if (!container) return;
+  if (!restaurantDishes.length) {
+    container.innerHTML = '<span class="empty" style="font-size:0.82rem">Nessun piatto salvato.</span>';
+    return;
+  }
+  container.innerHTML = restaurantDishes.map(d => `
+    <span class="dish-chip" data-id="${d.id}" data-name="${esc(d.name)}">
+      ${esc(d.name)}
+      <button class="dish-chip-del" data-id="${d.id}" title="Rimuovi dalla lista">×</button>
+    </span>`).join('');
+
+  // Click chip → append to menu textarea
+  container.querySelectorAll('.dish-chip').forEach(chip => {
+    chip.addEventListener('click', e => {
+      if (e.target.classList.contains('dish-chip-del')) return;
+      const name = chip.dataset.name;
+      const ta = document.getElementById('restaurant-menu-text');
+      const val = ta.value.trim();
+      ta.value = val ? val + '\n' + name : name;
+      ta.focus();
+    });
+  });
+
+  // Click × → delete dish from library
+  container.querySelectorAll('.dish-chip-del').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id, 10);
+      const res = await restaurantApiFetch(`/restaurant/dishes/${id}`, 'DELETE');
+      if (res) {
+        restaurantDishes = restaurantDishes.filter(d => d.id !== id);
+        renderDishChips();
+      }
+    });
+  });
+}
+
+async function addRestaurantDish() {
+  const input = document.getElementById('restaurant-new-dish');
+  const name = input?.value.trim();
+  if (!name) { input?.focus(); return; }
+  const res = await restaurantApiFetch('/restaurant/dishes', 'POST', { name });
+  if (res) {
+    input.value = '';
+    restaurantDishes.push(res);
+    restaurantDishes.sort((a, b) => a.name.localeCompare(b.name, 'it'));
+    renderDishChips();
+  }
 }

@@ -434,6 +434,19 @@
           <label for="restaurant-date">Data:</label>
           <input id="restaurant-date" type="date" />
           <button id="btn-restaurant-refresh" class="btn btn-secondary btn-sm">↻ Aggiorna</button>
+          <div class="restaurant-sort-row">
+            <span class="restaurant-sort-label">Ordina per:</span>
+            <button class="restaurant-sort-btn active" data-sort="newest">⬇ Recenti</button>
+            <button class="restaurant-sort-btn" data-sort="oldest">⬆ Primi</button>
+            <button class="restaurant-sort-btn" data-sort="alpha">A–Z</button>
+          </div>
+        </div>
+        <div class="restaurant-collapse-bar">
+          <span id="restaurant-orders-count" class="restaurant-orders-count"></span>
+          <div class="restaurant-collapse-actions">
+            <button id="btn-expand-all" class="btn btn-xs btn-secondary">⊞ Espandi tutti</button>
+            <button id="btn-collapse-all" class="btn btn-xs btn-secondary">⊟ Comprimi tutti</button>
+          </div>
         </div>
         <div id="restaurant-tables-list">
           <p class="empty">Nessun ordine per oggi.</p>
@@ -467,14 +480,59 @@
       <!-- Menu tab -->
       <section id="rtab-menu" class="rtab active">
         <div class="restaurant-menu-editor">
+
+          <!-- Date + status row -->
           <div class="restaurant-menu-head">
             <h2>📋 Menu del giorno</h2>
             <input id="restaurant-menu-date" type="date" />
           </div>
-          <textarea id="restaurant-menu-text" rows="10" placeholder="Inserisci il menu del giorno…&#10;Es:&#10;Primo: Pasta al ragù&#10;Secondo: Pollo arrosto&#10;Contorno: Insalata mista"></textarea>
+
+          <!-- Day status: closed / capacity -->
+          <div class="restaurant-status-bar">
+            <label class="restaurant-status-toggle">
+              <input type="checkbox" id="restaurant-closed-toggle" />
+              <span class="restaurant-status-label">🚫 Chiuso / non accetta ordini oggi</span>
+            </label>
+            <div class="restaurant-capacity-row">
+              <label for="restaurant-max-orders">Max ordini:</label>
+              <input type="number" id="restaurant-max-orders" min="0" value="0" />
+              <span class="restaurant-capacity-hint">(0 = illimitato)</span>
+            </div>
+            <button id="btn-restaurant-save-status" class="btn btn-secondary btn-sm">💾 Salva stato</button>
+          </div>
+
+          <!-- Dish library — quick-add chips -->
+          <div class="restaurant-dish-library">
+            <div class="restaurant-dish-library-head">
+              <span class="restaurant-dish-library-title">📚 Piatti salvati</span>
+              <span class="restaurant-dish-library-hint">clicca per aggiungere al menu</span>
+            </div>
+            <div id="restaurant-dish-chips" class="restaurant-dish-chips">
+              <span class="empty" style="font-size:0.82rem">Nessun piatto salvato.</span>
+            </div>
+            <div class="restaurant-add-dish-row">
+              <input type="text" id="restaurant-new-dish" placeholder="Aggiungi nuovo piatto…" maxlength="80" />
+              <button id="btn-restaurant-add-dish" class="btn btn-secondary btn-sm">+ Aggiungi</button>
+            </div>
+          </div>
+
+          <!-- Free-text menu area + presets/max-dishes (from place) -->
+          <div class="restaurant-menu-text-section">
+            <div class="restaurant-menu-text-head">
+              <span class="restaurant-menu-text-label">✏️ Testo menu <small>(una voce per riga)</small></span>
+              <div class="restaurant-menu-maxdishes-row">
+                <label for="restaurant-menu-maxdishes">Max portate/persona:</label>
+                <input type="number" id="restaurant-menu-maxdishes" min="0" value="0" />
+                <span class="restaurant-capacity-hint">(0 = illimitato)</span>
+              </div>
+            </div>
+            <textarea id="restaurant-menu-text" rows="8"></textarea>
+          </div>
+
           <div class="restaurant-menu-actions">
             <button id="btn-restaurant-save-menu" class="btn btn-primary">💾 Salva Menu</button>
             <button id="btn-restaurant-load-menu" class="btn btn-secondary btn-sm">↻ Ricarica</button>
+            <button id="btn-restaurant-clear-menu" class="btn btn-secondary btn-sm">🗑 Svuota</button>
           </div>
         </div>
       </section>
