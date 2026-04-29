@@ -8,6 +8,78 @@ const cors = require('cors');
 const db = require('./database');
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
+const webpush = require('web-push');
+const fs = require('fs');
+
+// ── Web Push / VAPID ───────────────────────────────────────
+const VAPID_FILE = path.join(__dirname, 'data', 'vapid_keys.json');
+let vapidKeys = { publicKey: null, privateKey: null };
+try {
+  vapidKeys = JSON.parse(fs.readFileSync(VAPID_FILE, 'utf8'));
+} catch (_) {
+  vapidKeys = webpush.generateVAPIDKeys();
+  fs.writeFileSync(VAPID_FILE, JSON.stringify(vapidKeys, null, 2));
+}
+webpush.setVapidDetails(
+  'mailto:admin@listapranzo.local',
+  vapidKeys.publicKey,
+  vapidKeys.privateKey
+);
+
+/** Send a push notification to all subscriptions of every member in a group. */
+async function sendPushToGroup(group_id, payload) {
+  const members = new Set(db.users.find({ group_id }).map(u => u.name));
+  const subs = db.push_subscriptions.find({ group_id });
+  const msg  = JSON.stringify(payload);
+  await Promise.allSettled(
+    subs
+      .filter(s => members.has(s.user_name) && s.subscription)
+      .map(s =>
+        webpush.sendNotification(s.subscription, msg).catch(err => {
+          if (err.statusCode === 410 || err.statusCode === 404) {
+            db.push_subscriptions.remove({ id: s.id });
+          }
+        })
+      )
+  );
+}
+
+/** Send push to all groups that have members (menu is global — notify everyone). */
+async function sendPushMenuToAllGroups(placeName, date) {
+  const allGroups = db.groups.find();
+  await Promise.allSettled(
+    allGroups.map(g =>
+      sendPushToGroup(g.id, {
+        type:  'menu_published',
+        title: '🍽️ Menu pubblicato!',
+        body:  `${placeName} ha pubblicato il menu per oggi (${date}). Vota adesso!`
+      })
+    )
+  );
+}
+
+/** Send push only to the restaurant user(s) whose place_id matches. */
+async function sendPushToRestaurant(place_id, payload) {
+  const restaurantUsers = db.users.find({ role: 'restaurant', place_id });
+  const msg = JSON.stringify(payload);
+  await Promise.allSettled(
+    restaurantUsers.map(u => {
+      // Subscriptions for restaurant users are stored with group_id = null
+      const subs = db.push_subscriptions.find({ user_name: u.name });
+      return Promise.allSettled(
+        subs
+          .filter(s => s.subscription)
+          .map(s =>
+            webpush.sendNotification(s.subscription, msg).catch(err => {
+              if (err.statusCode === 410 || err.statusCode === 404) {
+                db.push_subscriptions.remove({ id: s.id });
+              }
+            })
+          )
+      );
+    })
+  );
+}
 
 // ── JWT config ─────────────────────────────────────────────
 const JWT_SECRET     = process.env.JWT_SECRET || (() => {
@@ -109,6 +181,7 @@ function timerKey(date, group_id) { return `${date}_${group_id}`; }
 function clearVoteTimer(date, group_id) {
   const key = timerKey(date, group_id);
   if (voteTimers[key]) { clearTimeout(voteTimers[key]); delete voteTimers[key]; }
+  if (warnTimers && warnTimers[key]) { clearTimeout(warnTimers[key]); delete warnTimers[key]; }
 }
 
 function autoCloseVoting(date, group_id) {
@@ -129,13 +202,41 @@ function autoCloseVoting(date, group_id) {
   });
   broadcast({ type: 'session_updated', session: db.session.findOne({ date, group_id }) });
   autoSubmitPreOrders(date, group_id);
+  // Push notification: voting closed, orders open
+  const winName = winning_place_id ? (db.places.findOne({ id: winning_place_id })?.name || '') : '';
+  sendPushToGroup(group_id, {
+    type: 'ordering_open',
+    title: '🍽️ Ordini aperti!',
+    body: winName ? `Ha vinto: ${winName}. Fai il tuo ordine adesso!` : 'La votazione è chiusa — ordina adesso!'
+  }).catch(() => {});
+}
+
+// 5-minute warning timers (separate set so we can cancel them too)
+const warnTimers = {};
+
+function clearWarnTimer(date, group_id) {
+  const key = timerKey(date, group_id);
+  if (warnTimers[key]) { clearTimeout(warnTimers[key]); delete warnTimers[key]; }
 }
 
 function armVoteTimer(date, group_id, timerEnd) {
   clearVoteTimer(date, group_id);
+  clearWarnTimer(date, group_id);
   const delay = new Date(timerEnd) - Date.now();
   if (delay <= 0) { autoCloseVoting(date, group_id); return; }
   voteTimers[timerKey(date, group_id)] = setTimeout(() => autoCloseVoting(date, group_id), delay);
+  // Schedule a 5-minute warning push (only if more than 5 min remain)
+  const warnDelay = delay - 5 * 60 * 1000;
+  if (warnDelay > 0) {
+    warnTimers[timerKey(date, group_id)] = setTimeout(() => {
+      delete warnTimers[timerKey(date, group_id)];
+      sendPushToGroup(group_id, {
+        type: 'timer_warning',
+        title: '⏱ 5 minuti rimasti!',
+        body: 'La votazione sta per chiudersi. Vota adesso!'
+      }).catch(() => {});
+    }, warnDelay);
+  }
 }
 
 // ── Server-side pre-order auto-submit ─────────────────────
@@ -305,6 +406,10 @@ app.post('/api/menus', (req, res) => {
   if (!place_id || !date) return res.status(400).json({ error: 'place_id and date are required' });
   db.menus.upsert({ place_id: parseInt(place_id, 10), date }, { menu_text: (menu_text || '').trim() });
   broadcast({ type: 'menus_updated', date });
+  if ((menu_text || '').trim()) {
+    const placeName = db.places.findOne({ id: parseInt(place_id, 10) })?.name || 'Il ristorante';
+    sendPushMenuToAllGroups(placeName, date).catch(() => {});
+  }
   res.json({ ok: true });
 });
 app.delete('/api/menus/:date', (req, res) => {
@@ -536,7 +641,17 @@ app.put('/api/groups/:gid/session/:date', (req, res) => {
     { state, winning_place_id: singleId, winning_place_ids: ids, timer_end: null });
   const session = db.session.findOne({ date: req.params.date, group_id });
   broadcast({ type: 'session_updated', session });
-  if (state === 'ordering') autoSubmitPreOrders(req.params.date, group_id);
+  if (state === 'ordering') {
+    autoSubmitPreOrders(req.params.date, group_id);
+    // Push notification: voting closed manually, orders open
+    const winIds = ids.length > 1 ? ids : (singleId ? [singleId] : []);
+    const winNames = winIds.map(id => db.places.findOne({ id })?.name).filter(Boolean);
+    sendPushToGroup(group_id, {
+      type: 'ordering_open',
+      title: '🍽️ Ordini aperti!',
+      body: winNames.length ? `Ha vinto: ${winNames.join(' + ')}. Fai il tuo ordine!` : 'La votazione è chiusa — ordina adesso!'
+    }).catch(() => {});
+  }
   logAudit('session_change', {
     date: req.params.date, group_id,
     group_name: db.groups.findOne({ id: group_id })?.name,
@@ -582,6 +697,39 @@ app.patch('/api/groups/:gid/session/:date/winner', (req, res) => {
   const session = db.session.findOne({ date: req.params.date, group_id });
   broadcast({ type: 'session_updated', session });
   res.json(session);
+});
+
+// ═══ WEB PUSH ═════════════════════════════════════════════
+// Return the VAPID public key so the client can subscribe
+app.get('/api/push/vapid-public-key', (req, res) => {
+  res.json({ publicKey: vapidKeys.publicKey });
+});
+
+// Save (or update) a push subscription for a user
+app.post('/api/push/subscribe', (req, res) => {
+  const { user_name, group_id, subscription } = req.body;
+  if (!user_name || !subscription?.endpoint)
+    return res.status(400).json({ error: 'user_name e subscription sono richiesti' });
+  // group_id is null for restaurant/admin users — store as null
+  const gid = (group_id != null && group_id !== '') ? parseInt(group_id, 10) : null;
+  // Upsert by endpoint so re-subscribing updates keys rather than duplicating
+  const allSubs = db.push_subscriptions.find({ user_name });
+  const existing = allSubs.find(s => s.subscription?.endpoint === subscription.endpoint);
+  if (existing) {
+    db.push_subscriptions.update({ id: existing.id }, { subscription, group_id: gid });
+  } else {
+    // Remove stale subscriptions for this user (device re-subscribed)
+    db.push_subscriptions.remove({ user_name });
+    db.push_subscriptions.insert({ user_name, group_id: gid, subscription });
+  }
+  res.json({ ok: true });
+});
+
+// Remove a push subscription (user opts out)
+app.post('/api/push/unsubscribe', (req, res) => {
+  const { user_name } = req.body;
+  if (user_name) db.push_subscriptions.remove({ user_name });
+  res.json({ ok: true });
 });
 
 // ═══ GROUP VOTES ══════════════════════════════════════════
@@ -713,6 +861,16 @@ app.post('/api/groups/:gid/orders', (req, res) => {
     place_name: db.places.findOne({ id: place_id ? parseInt(place_id, 10) : null })?.name || '',
     order_text: order_text.trim()
   });
+  // Push the restaurant: new order arrived
+  if (place_id) {
+    const pid = parseInt(place_id, 10);
+    const groupName = db.groups.findOne({ id: group_id })?.name || '';
+    sendPushToRestaurant(pid, {
+      type:  'new_order',
+      title: '🔔 Nuovo ordine!',
+      body:  `${colleague_name.trim()} (${groupName}) — ${order_text.trim()}`
+    }).catch(() => {});
+  }
   res.json({ ok: true });
 });
 app.delete('/api/groups/:gid/orders/:date', (req, res) => {
@@ -769,6 +927,14 @@ app.post('/api/groups/:gid/asporto', (req, res) => {
     place_name: db.places.findOne({ id: parseInt(place_id, 10) })?.name || '',
     order_text: order_text.trim()
   });
+  // Push the restaurant: new asporto order arrived
+  const apid = parseInt(place_id, 10);
+  const agroupName = db.groups.findOne({ id: group_id })?.name || '';
+  sendPushToRestaurant(apid, {
+    type:  'new_order',
+    title: '🛵 Nuovo ordine asporto!',
+    body:  `${colleague_name.trim()} (${agroupName}) — ${order_text.trim()}`
+  }).catch(() => {});
   res.json({ ok: true });
 });
 app.delete('/api/groups/:gid/asporto/:date', (req, res) => {
@@ -966,25 +1132,28 @@ app.get('/api/data/export', (req, res) => {
   res.setHeader('Content-Disposition',
     `attachment; filename="listapranzo-backup-${new Date().toISOString().split('T')[0]}.json"`);
   res.json({
-    exportedAt:     new Date().toISOString(),
-    version:        2,
-    places:         db.places.find(),
-    menus:          db.menus.find(),
-    preorders:      db.preorders.find(),
-    users:          db.users.find(),
-    groups:         db.groups.find(),
-    group_requests: db.group_requests.find(),
-    join_requests:  db.join_requests.find(),
-    orders:         db.orders.find(),
-    votes:          db.votes.find(),
-    session:        db.session.find(),
-    asporto:        db.asporto.find(),
-    audit:          db.audit.find(),
+    exportedAt:          new Date().toISOString(),
+    version:             3,
+    places:              db.places.find(),
+    menus:               db.menus.find(),
+    preorders:           db.preorders.find(),
+    users:               db.users.find(),
+    groups:              db.groups.find(),
+    group_requests:      db.group_requests.find(),
+    join_requests:       db.join_requests.find(),
+    orders:              db.orders.find(),
+    votes:               db.votes.find(),
+    session:             db.session.find(),
+    asporto:             db.asporto.find(),
+    audit:               db.audit.find(),
+    restaurant_dishes:   db.restaurant_dishes.find(),
+    restaurant_status:   db.restaurant_status.find(),
   });
 });
 app.post('/api/data/import', (req, res) => {
   const { places, menus, preorders, users, groups,
-          group_requests, join_requests, orders, votes, session, asporto, audit } = req.body;
+          group_requests, join_requests, orders, votes, session, asporto, audit,
+          restaurant_dishes, restaurant_status } = req.body;
   if (!Array.isArray(places) || !Array.isArray(menus) || !Array.isArray(users))
     return res.status(400).json({ error: 'Invalid backup' });
   const restore = (store, arr) => {
@@ -993,15 +1162,17 @@ app.post('/api/data/import', (req, res) => {
     store._save();
   };
   restore(db.places, places); restore(db.menus, menus);
-  if (Array.isArray(preorders))      restore(db.preorders,      preorders);
-  if (Array.isArray(groups))         restore(db.groups,         groups);
-  if (Array.isArray(group_requests)) restore(db.group_requests, group_requests);
-  if (Array.isArray(join_requests))  restore(db.join_requests,  join_requests);
-  if (Array.isArray(orders))         restore(db.orders,         orders);
-  if (Array.isArray(votes))          restore(db.votes,          votes);
-  if (Array.isArray(session))        restore(db.session,        session);
-  if (Array.isArray(asporto))        restore(db.asporto,        asporto);
-  if (Array.isArray(audit))          restore(db.audit,          audit);
+  if (Array.isArray(preorders))          restore(db.preorders,          preorders);
+  if (Array.isArray(groups))             restore(db.groups,             groups);
+  if (Array.isArray(group_requests))     restore(db.group_requests,     group_requests);
+  if (Array.isArray(join_requests))      restore(db.join_requests,      join_requests);
+  if (Array.isArray(orders))             restore(db.orders,             orders);
+  if (Array.isArray(votes))              restore(db.votes,              votes);
+  if (Array.isArray(session))            restore(db.session,            session);
+  if (Array.isArray(asporto))            restore(db.asporto,            asporto);
+  if (Array.isArray(audit))              restore(db.audit,              audit);
+  if (Array.isArray(restaurant_dishes))  restore(db.restaurant_dishes,  restaurant_dishes);
+  if (Array.isArray(restaurant_status))  restore(db.restaurant_status,  restaurant_status);
   const importedNames = new Set(users.map(u => u.name));
   const existingAdmin = db.users.findOne({ name: 'admin' });
   restore(db.users, users);
@@ -1042,15 +1213,23 @@ app.get('/api/restaurant/orders/:date', requireRestaurant, (req, res) => {
   const byGroup = {};
   orders.forEach(o => {
     const gid = o.group_id;
-    if (!byGroup[gid]) byGroup[gid] = { group_id: gid, group_name: groupsMap[gid] || `Gruppo ${gid}`, orders: [] };
-    byGroup[gid].orders.push({
+    if (!byGroup[gid]) byGroup[gid] = {
+      group_id: gid, group_name: groupsMap[gid] || `Gruppo ${gid}`,
+      orders: [], first_order_at: o.created_at, last_order_at: o.created_at
+    };
+    const g = byGroup[gid];
+    g.orders.push({
       id: o.id, colleague_name: o.colleague_name, order_text: o.order_text,
       late_round: o.late_round || 0, is_late: !!o.is_late, created_at: o.created_at
     });
+    if (o.created_at < g.first_order_at) g.first_order_at = o.created_at;
+    if (o.created_at > g.last_order_at)  g.last_order_at  = o.created_at;
   });
   // Sort each group's orders by creation time
   Object.values(byGroup).forEach(g => g.orders.sort((a, b) => (a.created_at || '').localeCompare(b.created_at || '')));
-  res.json(Object.values(byGroup));
+  // Sort groups by most recent order timestamp desc
+  const result = Object.values(byGroup).sort((a, b) => (b.last_order_at || '').localeCompare(a.last_order_at || ''));
+  res.json(result);
 });
 
 app.get('/api/restaurant/asporto/:date', requireRestaurant, (req, res) => {
@@ -1070,16 +1249,84 @@ app.get('/api/restaurant/menus/:date', requireRestaurant, (req, res) => {
 });
 
 app.post('/api/restaurant/menus', requireRestaurant, (req, res) => {
-  const { date, menu_text } = req.body;
+  const { date, menu_text, max_dishes } = req.body;
   if (!date) return res.status(400).json({ error: 'date richiesta' });
   const placeId = req.authUser.place_id;
+  const patch = { menu_text: menu_text || '', max_dishes: parseInt(max_dishes, 10) || 0 };
   const existing = db.menus.findOne({ date, place_id: placeId });
   if (existing) {
-    db.menus.update({ date, place_id: placeId }, { menu_text: menu_text || '' });
+    db.menus.update({ date, place_id: placeId }, patch);
   } else {
-    db.menus.insert({ place_id: placeId, date, menu_text: menu_text || '' });
+    db.menus.insert({ place_id: placeId, date, ...patch });
   }
+  // Auto-add each non-empty line as a known dish for this place
+  const lines = (menu_text || '').split('\n').map(l => l.trim()).filter(Boolean);
+  lines.forEach(dish => {
+    const key = dish.toLowerCase();
+    if (!db.restaurant_dishes.findOne({ place_id: placeId, key })) {
+      db.restaurant_dishes.insert({ place_id: placeId, key, name: dish, created_at: new Date().toISOString() });
+    }
+  });
   broadcast({ type: 'menus_updated', date, place_id: placeId });
+  if ((menu_text || '').trim()) {
+    const placeName = db.places.findOne({ id: placeId })?.name || 'Il ristorante';
+    sendPushMenuToAllGroups(placeName, date).catch(() => {});
+  }
+  res.json({ ok: true });
+});
+
+// ── Restaurant dish library ────────────────────────────────────
+app.get('/api/restaurant/dishes', requireRestaurant, (req, res) => {
+  const placeId = req.authUser.place_id;
+  const dishes = db.restaurant_dishes.find({ place_id: placeId })
+    .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+  res.json(dishes.map(d => ({ id: d.id, name: d.name })));
+});
+
+app.post('/api/restaurant/dishes', requireRestaurant, (req, res) => {
+  const placeId = req.authUser.place_id;
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'name richiesto' });
+  const key = name.trim().toLowerCase();
+  if (db.restaurant_dishes.findOne({ place_id: placeId, key }))
+    return res.status(409).json({ error: 'Piatto già presente' });
+  const dish = db.restaurant_dishes.insert({ place_id: placeId, key, name: name.trim(), created_at: new Date().toISOString() });
+  res.status(201).json({ id: dish.id, name: dish.name });
+});
+
+app.delete('/api/restaurant/dishes/:id', requireRestaurant, (req, res) => {
+  const id = parseInt(req.params.id, 10);
+  const placeId = req.authUser.place_id;
+  const dish = db.restaurant_dishes.findOne({ id, place_id: placeId });
+  if (!dish) return res.status(404).json({ error: 'Piatto non trovato' });
+  db.restaurant_dishes.remove({ id, place_id: placeId });
+  res.json({ ok: true });
+});
+
+// ── Restaurant day status (closed / capacity) ──────────────────
+app.get('/api/restaurant/status/:date', requireRestaurant, (req, res) => {
+  const { date } = req.params;
+  const placeId = req.authUser.place_id;
+  const status = db.restaurant_status.findOne({ place_id: placeId, date }) ||
+    { place_id: placeId, date, closed: false, max_orders: 0, notes: '' };
+  res.json(status);
+});
+
+app.post('/api/restaurant/status', requireRestaurant, (req, res) => {
+  const { date, closed, max_orders, notes } = req.body;
+  if (!date) return res.status(400).json({ error: 'date richiesta' });
+  const placeId = req.authUser.place_id;
+  const patch = {
+    closed:     !!closed,
+    max_orders: parseInt(max_orders, 10) || 0,
+    notes:      (notes || '').trim()
+  };
+  const existing = db.restaurant_status.findOne({ place_id: placeId, date });
+  if (existing) {
+    db.restaurant_status.update({ place_id: placeId, date }, patch);
+  } else {
+    db.restaurant_status.insert({ place_id: placeId, date, ...patch });
+  }
   res.json({ ok: true });
 });
 

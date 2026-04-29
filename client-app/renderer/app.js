@@ -29,6 +29,7 @@ let allVotes         = [];
 let asportoOrders    = [];
 let myAsportoOrders  = [];
 let asportoPrevScreen = 'voting';
+let orderPrevScreen   = null;   // set to 'manager' when ordering is opened from manager screen
 let mgrTimerInterval  = null;
 let mgrJoinRequests   = [];
 let mgrMembers        = [];
@@ -132,6 +133,9 @@ function showBackendError() {
 
 // ── Init ─────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  // Register service worker early (non-blocking)
+  initServiceWorker();
+
   document.getElementById('today-label').textContent =
     new Date().toLocaleDateString('it-IT', { weekday:'long', day:'numeric', month:'long' });
   setInterval(() => {
@@ -155,6 +159,26 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('btn-change-name-order').addEventListener('click', changeName);
   document.getElementById('btn-change-name-confirm').addEventListener('click', changeName);
   document.getElementById('btn-change-password').addEventListener('click', changePassword);
+  document.getElementById('btn-push-toggle').addEventListener('click', async () => {
+    if (Notification.permission === 'denied') {
+      showToast('Le notifiche sono bloccate nel browser. Abilitale dalle impostazioni del sito.');
+      return;
+    }
+    const isOn = Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1';
+    if (isOn) {
+      await pushUnsubscribe();
+      showToast('🔕 Notifiche disattivate.');
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        await pushSubscribe();
+        showToast('🔔 Notifiche attivate!');
+      } else {
+        showToast('Permesso negato — le notifiche non verranno inviate.');
+        await updatePushButton();
+      }
+    }
+  });
 
   // Voting
   document.getElementById('btn-submit-vote').addEventListener('click', submitVote);
@@ -313,11 +337,56 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Restaurant dashboard
   document.getElementById('btn-restaurant-logout').addEventListener('click', changeName);
+  document.getElementById('btn-push-toggle-restaurant').addEventListener('click', async () => {
+    if (Notification.permission === 'denied') {
+      showToast('Le notifiche sono bloccate nel browser. Abilitale dalle impostazioni del sito.');
+      return;
+    }
+    const isOn = Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1';
+    if (isOn) {
+      await pushUnsubscribe();
+      showToast('🔕 Notifiche disattivate.');
+    } else {
+      const perm = await Notification.requestPermission();
+      if (perm === 'granted') {
+        await pushSubscribe();
+        showToast('🔔 Notifiche attivate — riceverai un avviso per ogni nuovo ordine!');
+      } else {
+        showToast('Permesso negato — le notifiche non verranno inviate.');
+        await updatePushButton();
+      }
+    }
+  });
   document.getElementById('btn-restaurant-refresh').addEventListener('click', refreshRestaurantOrders);
   document.getElementById('restaurant-date').addEventListener('change', refreshRestaurantOrders);
   document.getElementById('btn-restaurant-save-menu').addEventListener('click', saveRestaurantMenu);
   document.getElementById('btn-restaurant-load-menu').addEventListener('click', loadRestaurantMenu);
   document.getElementById('restaurant-menu-date').addEventListener('change', loadRestaurantMenu);
+  document.getElementById('btn-restaurant-save-status').addEventListener('click', saveRestaurantStatus);
+  document.getElementById('btn-restaurant-add-dish').addEventListener('click', addRestaurantDish);
+  document.getElementById('restaurant-new-dish').addEventListener('keydown', e => { if (e.key === 'Enter') addRestaurantDish(); });
+  document.getElementById('btn-restaurant-clear-menu').addEventListener('click', () => {
+    document.getElementById('restaurant-menu-text').value = '';
+    document.getElementById('restaurant-menu-text').focus();
+  });
+  // Expand/collapse all
+  document.getElementById('btn-expand-all').addEventListener('click', () => {
+    restaurantCollapsed.clear();
+    renderRestaurantOrders();
+  });
+  document.getElementById('btn-collapse-all').addEventListener('click', () => {
+    restaurantOrders.forEach(t => restaurantCollapsed.add(t.group_id));
+    renderRestaurantOrders();
+  });
+  // Sort buttons
+  document.querySelectorAll('.restaurant-sort-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.restaurant-sort-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      restaurantSort = btn.dataset.sort;
+      renderRestaurantOrders();
+    });
+  });
   // Restaurant sub-tabs
   document.querySelectorAll('.rtab-btn').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -383,7 +452,7 @@ async function signIn() {
   setUserSession(data);
   if (data.role === 'restaurant' && data.token) {
     restaurantToken = data.token;
-    sessionStorage.setItem('restaurantToken', data.token);
+    localStorage.setItem('restaurantToken', data.token);
   }
   startApp();
 }
@@ -437,8 +506,12 @@ function saveUserSession() {
 function loginBack() { showSignInForm(); }
 
 function changeName() {
+  // Unsubscribe from push before clearing session
+  pushUnsubscribe().catch(() => {});
   ['collegeName','userRole','userGroupId','userGroupName','userPlaceId','userPlaceName'].forEach(k => localStorage.removeItem(k));
+  localStorage.removeItem('pushEnabled');
   sessionStorage.removeItem('restaurantToken');
+  localStorage.removeItem('restaurantToken');
   collegeName = ''; userRole = 'user'; userGroupId = null; userGroupName = '';
   userPlaceId = null; userPlaceName = ''; restaurantToken = null;
   hasVoted = false; hasOrdered = false; selectedPlaceIds = new Set(); allVotes = [];
@@ -458,6 +531,94 @@ async function changePassword() {
   const res = await apiFetch('/users/change-password', 'POST',
     { name: collegeName, old_password: oldPw, new_password: newPw });
   if (res) showToast('✅ Password cambiata con successo!');
+}
+
+// ═══ PUSH NOTIFICATIONS ══════════════════════════════════
+let _swRegistration = null;
+
+/** Register the service worker once. Safe to call multiple times. */
+async function initServiceWorker() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    _swRegistration = await navigator.serviceWorker.register('/client/sw.js', { scope: '/client/' });
+  } catch (_) { /* not critical */ }
+}
+
+/** Convert VAPID public key (base64url) to Uint8Array. */
+function urlBase64ToUint8Array(base64String) {
+  const pad    = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const b64    = (base64String + pad).replace(/-/g, '+').replace(/_/g, '/');
+  const raw    = atob(b64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) output[i] = raw.charCodeAt(i);
+  return output;
+}
+
+/** Subscribe the current user to push and send the subscription to the server. */
+async function pushSubscribe() {
+  if (!_swRegistration) return;
+  try {
+    // Fetch VAPID public key from server
+    const { publicKey } = await apiFetch('/push/vapid-public-key').catch(() => ({}));
+    if (!publicKey) return;
+    const subscription = await _swRegistration.pushManager.subscribe({
+      userVisibleOnly:      true,
+      applicationServerKey: urlBase64ToUint8Array(publicKey)
+    });
+    await apiFetch('/push/subscribe', 'POST', {
+      user_name:    collegeName,
+      group_id:     userGroupId,
+      subscription: subscription.toJSON()
+    });
+    localStorage.setItem('pushEnabled', '1');
+    updatePushButton();
+  } catch (err) {
+    // User denied or browser error — not fatal
+    console.warn('Push subscribe failed:', err);
+  }
+}
+
+/** Unsubscribe the current user from push. */
+async function pushUnsubscribe() {
+  if (!_swRegistration) return;
+  try {
+    const sub = await _swRegistration.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+    await apiFetch('/push/unsubscribe', 'POST', { user_name: collegeName });
+  } catch (_) {}
+  localStorage.removeItem('pushEnabled');
+  updatePushButton();
+}
+
+/** Update the bell button label/title based on current permission & subscription state. */
+async function updatePushButton() {
+  const btns = [
+    document.getElementById('btn-push-toggle'),
+    document.getElementById('btn-push-toggle-restaurant'),
+  ].filter(Boolean);
+  if (!('PushManager' in window) || Notification.permission === 'denied') {
+    btns.forEach(b => { b.style.display = 'none'; });
+    return;
+  }
+  const isOn = Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1';
+  btns.forEach(b => {
+    b.style.display = 'inline-flex';
+    b.textContent = isOn ? '🔔' : '🔕';
+    b.title = isOn ? 'Notifiche attive — clicca per disattivare' : 'Attiva notifiche push';
+  });
+}
+
+/** Called once after successful login/app start. Asks for permission if never asked. */
+async function maybeRequestPushPermission() {
+  if (!('PushManager' in window)) return;
+  if (userRole === 'admin') return; // admin doesn't need push
+  // restaurant users need a place_id; regular users need a group
+  if (userRole !== 'restaurant' && !userGroupId) return;
+  await updatePushButton();
+  // If already granted and was previously enabled, re-subscribe silently
+  if (Notification.permission === 'granted' && localStorage.getItem('pushEnabled') === '1') {
+    await pushSubscribe();
+  }
 }
 
 // ═══ APP START ════════════════════════════════════════════
@@ -491,6 +652,8 @@ async function startApp() {
     connectWebSocket();
     if (!autoSent) updateScreen();
     if (hasOrdered) renderConfirmationOrders();
+    // Ask for push permission (non-blocking, best-effort)
+    maybeRequestPushPermission();
   } catch (_) {
     showBackendError();
   }
@@ -611,6 +774,10 @@ function updateScreen() {
   }
   if (sessionState.state === 'ordering') {
     if (hasOrdered) { updateCancelButtonVisibility(); showScreen('confirmation'); return; }
+    // If coming from manager, track it so submit can return there
+    if (document.getElementById('screen-manager').classList.contains('active')) {
+      orderPrevScreen = 'manager';
+    }
     showScreen('ordering');
     renderOrderingScreen();
     return;
@@ -1095,8 +1262,15 @@ async function submitOrder() {
     } else {
       setConfirmText(orderText);
     }
-    showScreen('confirmation');
-    renderConfirmationOrders();
+    if (orderPrevScreen === 'manager') {
+      orderPrevScreen = null;
+      showToast('✅ Ordine inviato!');
+      showScreen('manager');
+      await renderManagerScreen();
+    } else {
+      showScreen('confirmation');
+      renderConfirmationOrders();
+    }
   }
 }
 
@@ -1121,6 +1295,7 @@ async function cancelOrder() {
   const myOrder = allOrders.find(o => o.colleague_name === collegeName);
   if (myOrder?.id) await apiFetch(gp(`/orders/${today}/${myOrder.id}`), 'DELETE', { manager_name: collegeName });
   hasOrdered = false; currentOrderText = ''; selectedOrderPlaceId = null;
+  orderPrevScreen = null;
   renderOrderingScreen();
   showScreen('ordering');
 }
@@ -1236,6 +1411,7 @@ async function deleteMyAsportoOrder(id) {
 
 // ═══ MANAGER DASHBOARD ════════════════════════════════════
 function backFromManager() {
+  orderPrevScreen = null;
   updateScreen();
 }
 
@@ -1602,6 +1778,18 @@ function renderMgrLockState() {
   const locked  = sessionLockCount() > 0;
   banner.style.display = locked ? 'flex' : 'none';
   if (waBtn) waBtn.textContent = sessionLockCount() > 0 ? '📲 Rigenera WhatsApp' : '🔒 Conferma & WhatsApp';
+
+  // Disable "Chiudi Sessione" when there is no winner or split
+  const closeBtn = document.getElementById('btn-mgr-close-session');
+  if (closeBtn && sessionState.state === 'ordering') {
+    const hasWinner = !!sessionState.winning_place_id;
+    const hasSplit  = Array.isArray(sessionState.winning_place_ids) && sessionState.winning_place_ids.length >= 2;
+    const noWinner  = !hasWinner && !hasSplit;
+    closeBtn.disabled = noWinner;
+    closeBtn.title    = noWinner
+      ? 'Imposta un vincitore o seleziona uno split prima di chiudere la sessione'
+      : '';
+  }
 }
 
 function mgrGenerateWA() {
@@ -1737,16 +1925,33 @@ function mgrOpenWA() {
 // ═══ RESTAURANT ════════════════════════════════════════════
 
 // State for restaurant dashboard
-let restaurantOrders  = [];   // [{group_id, group_name, orders:[...]}]
-let restaurantAsporto = [];   // flat list
+let restaurantOrders   = [];   // [{group_id, group_name, last_order_at, orders:[...]}]
+let restaurantAsporto  = [];   // flat list
+let restaurantDishes   = [];   // [{id, name}] — dish library for this place
+let restaurantStatus   = {};   // {closed, max_orders, notes}
+let restaurantSort     = 'newest';  // 'newest' | 'oldest' | 'alpha'
+let restaurantCollapsed = new Set(); // group_ids that are collapsed
 
 // Fetch with JWT Bearer token (used by restaurant for requireRestaurant endpoints)
 async function restaurantApiFetch(path, method = 'GET', body = null) {
-  const token = restaurantToken || sessionStorage.getItem('restaurantToken');
+  const token = restaurantToken || localStorage.getItem('restaurantToken') || sessionStorage.getItem('restaurantToken');
+  if (!token) {
+    // Token lost (e.g. mobile browser restarted) — go back to login
+    changeName();
+    return null;
+  }
   try {
     const opts = { method, headers: { 'Authorization': `Bearer ${token}` } };
     if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
     const res = await fetch(`${API}${path}`, opts);
+    if (res.status === 401) {
+      // Token expired or invalid — force re-login
+      localStorage.removeItem('restaurantToken');
+      sessionStorage.removeItem('restaurantToken');
+      restaurantToken = null;
+      changeName();
+      return null;
+    }
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       showToast(`Errore: ${err.error || res.statusText}`);
@@ -1759,16 +1964,21 @@ async function restaurantApiFetch(path, method = 'GET', body = null) {
 }
 
 async function startRestaurantApp() {
-  // Restore token from sessionStorage if available
-  restaurantToken = sessionStorage.getItem('restaurantToken') || null;
+  // Restore token — localStorage survives tab close on mobile, sessionStorage is fallback
+  restaurantToken = localStorage.getItem('restaurantToken') || sessionStorage.getItem('restaurantToken') || null;
   // Set today's date in both date pickers
   document.getElementById('restaurant-date').value = today;
   document.getElementById('restaurant-menu-date').value = today;
   // Show restaurant screen
   showScreen('restaurant');
   connectWebSocket();
-  await refreshRestaurantOrders();
-  await loadRestaurantMenu();
+  await Promise.all([
+    refreshRestaurantOrders(),
+    loadRestaurantMenu(),    // also loads status internally
+    loadRestaurantDishes(),
+  ]);
+  // Ask for push permission (non-blocking) — restaurant needs this for order alerts
+  maybeRequestPushPermission();
 }
 
 async function refreshRestaurantOrders() {
@@ -1791,28 +2001,62 @@ function renderRestaurantScreen() {
 
 function renderRestaurantOrders() {
   const container = document.getElementById('restaurant-tables-list');
-  if (!restaurantOrders.length) {
+  const countEl   = document.getElementById('restaurant-orders-count');
+
+  // Sort
+  let tables = [...restaurantOrders];
+  if (restaurantSort === 'newest') tables.sort((a, b) => (b.last_order_at || '').localeCompare(a.last_order_at || ''));
+  else if (restaurantSort === 'oldest') tables.sort((a, b) => (a.first_order_at || '').localeCompare(b.first_order_at || ''));
+  else tables.sort((a, b) => a.group_name.localeCompare(b.group_name, 'it'));
+
+  // Only show groups that have at least one order
+  tables = tables.filter(t => t.orders.length > 0);
+
+  const totalOrders = tables.reduce((s, t) => s + t.orders.length, 0);
+  if (countEl) countEl.textContent = tables.length
+    ? `${tables.length} ${tables.length === 1 ? 'tavolo' : 'tavoli'} · ${totalOrders} ${totalOrders === 1 ? 'ordine' : 'ordini'}`
+    : '';
+
+  if (!tables.length) {
     container.innerHTML = '<p class="empty">Nessun ordine per questa data.</p>';
     return;
   }
-  container.innerHTML = restaurantOrders.map(table => {
-    const orderRows = table.orders.map(o => `
-      <div class="restaurant-order-row${o.is_late ? ' restaurant-order-late' : ''}">
-        <span class="restaurant-order-name">${esc(o.colleague_name)}</span>
-        <span class="restaurant-order-text">${esc(o.order_text)}</span>
-        ${o.is_late ? `<span class="restaurant-late-badge">+${o.late_round}</span>` : ''}
-        ${fmtTime(o.created_at)}
-      </div>`).join('');
+
+  container.innerHTML = tables.map(table => {
+    const collapsed = restaurantCollapsed.has(table.group_id);
+    const orderRows = table.orders.map(o => {
+      const timeStr = fmtTime(o.created_at);
+      return `
+        <div class="restaurant-order-row${o.is_late ? ' restaurant-order-late' : ''}">
+          <span class="restaurant-order-name">${esc(o.colleague_name)}</span>
+          <span class="restaurant-order-text">${esc(o.order_text)}</span>
+          ${o.is_late ? `<span class="restaurant-late-badge">+ritardo</span>` : ''}
+          ${timeStr}
+        </div>`;
+    }).join('');
+    const lastTime = table.last_order_at ? fmtTime(table.last_order_at) : '';
     return `
-      <div class="restaurant-table-card">
-        <div class="restaurant-table-head">
+      <div class="restaurant-table-card" data-group="${table.group_id}">
+        <div class="restaurant-table-head restaurant-table-toggle" data-group="${table.group_id}">
           <span class="restaurant-table-icon">🪑</span>
           <strong class="restaurant-table-name">${esc(table.group_name)}</strong>
           <span class="restaurant-table-count">&times;${table.orders.length}</span>
+          <span class="restaurant-table-time">${lastTime}</span>
+          <span class="restaurant-collapse-icon">${collapsed ? '▶' : '▼'}</span>
         </div>
-        <div class="restaurant-table-orders">${orderRows}</div>
+        <div class="restaurant-table-orders${collapsed ? ' hidden' : ''}">${orderRows}</div>
       </div>`;
   }).join('');
+
+  // Collapse/expand via event delegation
+  container.querySelectorAll('.restaurant-table-toggle').forEach(el => {
+    el.addEventListener('click', () => {
+      const gid = parseInt(el.dataset.group, 10);
+      if (restaurantCollapsed.has(gid)) restaurantCollapsed.delete(gid);
+      else restaurantCollapsed.add(gid);
+      renderRestaurantOrders();
+    });
+  });
 }
 
 function renderRestaurantSummary() {
@@ -1887,15 +2131,101 @@ function renderRestaurantAsportoTab() {
 
 async function loadRestaurantMenu() {
   const date = document.getElementById('restaurant-menu-date').value || today;
-  const menu = await restaurantApiFetch(`/restaurant/menus/${date}`);
+  const [menu, status] = await Promise.all([
+    restaurantApiFetch(`/restaurant/menus/${date}`),
+    restaurantApiFetch(`/restaurant/status/${date}`)
+  ]);
   if (menu !== null) {
     document.getElementById('restaurant-menu-text').value = menu.menu_text || '';
+    const maxEl = document.getElementById('restaurant-menu-maxdishes');
+    if (maxEl) maxEl.value = menu.max_dishes || 0;
+  }
+  if (status) {
+    restaurantStatus = status;
+    const closedEl = document.getElementById('restaurant-closed-toggle');
+    const maxOrdEl = document.getElementById('restaurant-max-orders');
+    if (closedEl) closedEl.checked = !!status.closed;
+    if (maxOrdEl) maxOrdEl.value  = status.max_orders || 0;
   }
 }
 
 async function saveRestaurantMenu() {
   const date      = document.getElementById('restaurant-menu-date').value || today;
   const menu_text = document.getElementById('restaurant-menu-text').value;
-  const res = await restaurantApiFetch('/restaurant/menus', 'POST', { date, menu_text });
-  if (res) showToast('✅ Menu salvato!');
+  const max_dishes = parseInt(document.getElementById('restaurant-menu-maxdishes')?.value, 10) || 0;
+  const res = await restaurantApiFetch('/restaurant/menus', 'POST', { date, menu_text, max_dishes });
+  if (res) {
+    showToast('✅ Menu salvato!');
+    // Refresh dish library — saving menu auto-adds new lines as dishes
+    await loadRestaurantDishes();
+  }
+}
+
+async function saveRestaurantStatus() {
+  const date      = document.getElementById('restaurant-menu-date').value || today;
+  const closed    = document.getElementById('restaurant-closed-toggle')?.checked || false;
+  const max_orders = parseInt(document.getElementById('restaurant-max-orders')?.value, 10) || 0;
+  const res = await restaurantApiFetch('/restaurant/status', 'POST', { date, closed, max_orders });
+  if (res) showToast(closed ? '🚫 Ristorante chiuso per questa data.' : '✅ Stato aggiornato.');
+}
+
+// ── Dish library ──────────────────────────────────────────────
+async function loadRestaurantDishes() {
+  const dishes = await restaurantApiFetch('/restaurant/dishes');
+  if (dishes) {
+    restaurantDishes = dishes;
+    renderDishChips();
+  }
+}
+
+function renderDishChips() {
+  const container = document.getElementById('restaurant-dish-chips');
+  if (!container) return;
+  if (!restaurantDishes.length) {
+    container.innerHTML = '<span class="empty" style="font-size:0.82rem">Nessun piatto salvato.</span>';
+    return;
+  }
+  container.innerHTML = restaurantDishes.map(d => `
+    <span class="dish-chip" data-id="${d.id}" data-name="${esc(d.name)}">
+      ${esc(d.name)}
+      <button class="dish-chip-del" data-id="${d.id}" title="Rimuovi dalla lista">×</button>
+    </span>`).join('');
+
+  // Click chip → append to menu textarea
+  container.querySelectorAll('.dish-chip').forEach(chip => {
+    chip.addEventListener('click', e => {
+      if (e.target.classList.contains('dish-chip-del')) return;
+      const name = chip.dataset.name;
+      const ta = document.getElementById('restaurant-menu-text');
+      const val = ta.value.trim();
+      ta.value = val ? val + '\n' + name : name;
+      ta.focus();
+    });
+  });
+
+  // Click × → delete dish from library
+  container.querySelectorAll('.dish-chip-del').forEach(btn => {
+    btn.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(btn.dataset.id, 10);
+      const res = await restaurantApiFetch(`/restaurant/dishes/${id}`, 'DELETE');
+      if (res) {
+        restaurantDishes = restaurantDishes.filter(d => d.id !== id);
+        renderDishChips();
+      }
+    });
+  });
+}
+
+async function addRestaurantDish() {
+  const input = document.getElementById('restaurant-new-dish');
+  const name = input?.value.trim();
+  if (!name) { input?.focus(); return; }
+  const res = await restaurantApiFetch('/restaurant/dishes', 'POST', { name });
+  if (res) {
+    input.value = '';
+    restaurantDishes.push(res);
+    restaurantDishes.sort((a, b) => a.name.localeCompare(b.name, 'it'));
+    renderDishChips();
+  }
 }
